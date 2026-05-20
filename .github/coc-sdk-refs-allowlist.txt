@@ -1,0 +1,76 @@
+# Allowlist of files that legitimately reference src/kailash/ source paths.
+# These files guide developers working WITH the kailash-py source tree
+# (skill navigation, origin provenance, compliance tracking).
+#
+# CI validates .claude/ content doesn't contain src/kailash/ contamination
+# EXCEPT in files listed here. One file path per line, relative to repo root.
+# Lines starting with # are comments, blank lines ignored.
+#
+# This file is AUTO-MAINTAINED by loom's coc-sync agent (Gate 2 Step 7.5).
+# Manual edits are preserved — auto-refresh only APPENDS new entries under a
+# date-stamped block. Removals require human action.
+#
+# Add a path here manually only if a new skill/agent legitimately needs to
+# reference kailash-py source (e.g., provenance for an Origin: line, or a
+# skill that teaches developers how to navigate the SDK layout).
+
+# ─── seeded 2026-04-28 from loom v2.9.3 (multi-CLI py template) ──────
+# Files containing legitimate src/kailash/ references (rule examples
+# teaching SDK structure, hook scanning logic, skill content documenting
+# BUILD repo conventions for downstream developers).
+.claude/agents/frameworks/infrastructure-specialist.md
+.claude/commands/cc-audit.md
+.claude/guides/co-setup/07-sync-flow.md
+.claude/hooks/session-start.js
+.claude/rules/build-repo-release-discipline.md
+.claude/rules/ci-runners.md
+.claude/rules/dataflow-identifier-safety.md
+.claude/rules/deployment.md
+.claude/skills/01-core-sdk/otel-tracing.md
+.claude/skills/02-dataflow/cache-cas-fail-closed.md
+.claude/skills/05-kailash-mcp/mcp-platform-server.md
+.claude/skills/10-deployment-git/multi-package-release-wave.md
+.claude/skills/12-testing-strategies/SKILL.md
+.claude/skills/18-security-patterns/credential-url-handling.md
+.claude/skills/26-eatp-reference/eatp-trust-posture-canonical.md
+.claude/skills/29-pact/pact-conformance-features.md
+.claude/skills/29-pact/pact-governance-engine.md
+.claude/skills/30-claude-code-patterns/parallel-merge-workflow.md
+.claude/skills/30-claude-code-patterns/sdk-upstream-donation.md
+
+# ─── auto-extended 2026-04-28 from loom v2.9.5 ──────
+# Files newly distributed in this sync that contain legitimate
+# src/kailash/ references. Auto-appended by coc-sync Step 7.5.
+.claude/commands/release.md
+.claude/skills/01-core-sdk/async-resource-safety.md
+.claude/skills/01-core-sdk/production-readiness-patterns.md
+.claude/skills/01-core-sdk/runtime-lifecycle.md
+.claude/skills/08-nodes-reference/nodes-quick-index.md
+.claude/skills/26-eatp-reference/eatp-posture-stores.md
+.claude/skills/29-pact/pact-access-enforcement.md
+.claude/skills/29-pact/pact-dtr-addressing.md
+.claude/skills/29-pact/pact-envelopes.md
+.claude/skills/29-pact/pact-governed-agents.md
+.claude/skills/29-pact/pact-kaizen-integration.md
+.claude/skills/29-pact/pact-quickstart.md
+
+# ─── auto-extended 2026-04-30 from loom v2.11.0 ──────
+# Files newly distributed in this sync that contain legitimate
+# src/kailash/ references. Auto-appended by coc-sync Step 7.5.
+.claude/skills/spec-compliance/SKILL.md
+
+# ─── auto-extended 2026-05-03 from loom v2.15.0 ──────
+# Files newly distributed in this sync that contain legitimate
+# src/kailash/ references. Auto-appended by coc-sync Step 7.5.
+.claude/VERSION
+
+# ─── auto-extended 2026-05-09 from loom v2.28.2 (1fcffe7) ──────
+# Files newly distributed in this sync that contain legitimate
+# src/kailash/ references. Auto-appended by coc-sync Step 7.5.
+.claude/skills/15-enterprise-infrastructure/durability-patterns.md
+.claude/skills/15-enterprise-infrastructure/scheduler-patterns.md
+
+# ─── auto-extended 2026-05-18 from loom v2.31.0 @ 0266594 ──────
+# Auto-appended by coc-sync Step 7.5 (delta sync PRs #284/#285/#286).
+.claude/audit-fixtures/scan-synced-disclosure/r3-smuggle-closed/.claude/rules/cleanlocks.md
+.claude/bin/scan-synced-disclosure.mjs

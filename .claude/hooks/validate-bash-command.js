@@ -1,0 +1,508 @@
+#!/usr/bin/env node
+/**
+ * Hook: validate-bash-command
+ * Event: PreToolUse
+ * Matcher: Bash
+ * Purpose: Block dangerous commands, suggest tmux for long-running,
+ *          ENFORCE .env loading for pytest/python commands
+ *
+ * Framework-agnostic — works with any Kailash project.
+ *
+ * Exit Codes:
+ *   0 = success (continue)
+ *   2 = blocking error (stop tool execution)
+ *   other = non-blocking error (warn and continue)
+ */
+
+const fs = require("fs");
+const path = require("path");
+const {
+  logObservation: logLearningObservation,
+} = require("./lib/learning-utils");
+const { instructAndWait } = require("./lib/instruct-and-wait");
+const { detectStateFileMutation } = require("./lib/violation-patterns");
+
+// Timeout handling for PreToolUse hooks (5 second limit)
+const TIMEOUT_MS = 5000;
+const timeout = setTimeout(() => {
+  console.error("[HOOK TIMEOUT] validate-bash-command exceeded 5s limit");
+  console.log(JSON.stringify({ continue: true }));
+  process.exit(1);
+}, TIMEOUT_MS);
+
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => (input += chunk));
+process.stdin.on("end", () => {
+  clearTimeout(timeout);
+  try {
+    const data = JSON.parse(input);
+    const result = validateBashCommand(data);
+    // If result is structured for instruct-and-wait, use canonical shape
+    if (result.severity) {
+      const out = instructAndWait({
+        hookEvent: "PreToolUse",
+        severity: result.severity,
+        what_happened: result.what_happened,
+        why: result.why,
+        agent_must_report: result.agent_must_report,
+        agent_must_wait: result.agent_must_wait,
+        user_summary: result.user_summary,
+      });
+      console.log(JSON.stringify(out.json));
+      process.exit(out.exitCode);
+    }
+    // Legacy advisory path
+    console.log(
+      JSON.stringify({
+        continue: result.continue,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          validation: result.message,
+        },
+      }),
+    );
+    process.exit(result.exitCode);
+  } catch (error) {
+    console.error(`[HOOK ERROR] ${error.message}`);
+    console.log(JSON.stringify({ continue: true }));
+    process.exit(1);
+  }
+});
+
+function validateBashCommand(data) {
+  const command = data.tool_input?.command || "";
+  const cwd = data.cwd || process.cwd();
+
+  // ADVISORY (loom #19 P3): branch-scope warn on `git commit` invocations.
+  // Delegates to .claude/hooks/pre-commit-branch-scope.js which always
+  // exits 0 and writes any out-of-scope advisory to stderr. Warn-only.
+  if (/^\s*git\s+commit\b/.test(command)) {
+    try {
+      const { spawnSync } = require("child_process");
+      const scopeScript = path.join(__dirname, "pre-commit-branch-scope.js");
+      const r = spawnSync("node", [scopeScript], {
+        cwd,
+        encoding: "utf8",
+        timeout: 4500,
+      });
+      const output = (r.stderr || "").trim();
+      if (output) {
+        return { continue: true, exitCode: 0, message: output };
+      }
+    } catch {
+      // Advisory failure must never block the commit.
+    }
+  }
+
+  // HALT-AND-REPORT (loom #263): synced-artifact disclosure scan on
+  // `git commit` invocations that stage any `.claude/**` path. Mirrors
+  // the pre-commit-branch-scope.js delegation above. The scanner-on-
+  // content is content-regex, so per rules/hook-output-discipline.md
+  // MUST-2 (lexical signals MUST NOT carry severity:block) this returns
+  // `halt-and-report`, NOT `block`. Scanner-internal error MUST NOT
+  // block the commit (advisory-fail-open on tool error, exactly like
+  // the scope delegation above).
+  if (/^\s*git\s+commit\b/.test(command)) {
+    try {
+      const { spawnSync } = require("child_process");
+      // Only run when the commit stages a synced-surface path. Cheap
+      // pre-filter — avoids scanning on commits that touch only non-
+      // `.claude/**` files (the scanner already excludes never-synced
+      // subpaths internally, but skipping the spawn entirely is faster).
+      const staged = spawnSync("git", ["diff", "--cached", "--name-only"], {
+        cwd,
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      const stagedFiles = (staged.stdout || "")
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const touchesSynced = stagedFiles.some(
+        (f) =>
+          f.startsWith(".claude/") || f === "AGENTS.md" || f === "GEMINI.md",
+      );
+      if (touchesSynced) {
+        const scanScript = path.join(
+          __dirname,
+          "..",
+          "bin",
+          "scan-synced-disclosure.mjs",
+        );
+        const r = spawnSync("node", [scanScript, "--check"], {
+          cwd,
+          encoding: "utf8",
+          timeout: 4000,
+        });
+        // r.status === null on spawn failure/timeout → fail-open.
+        // r.error set on ENOENT / timeout → fail-open.
+        // Exit 2 is a scanner usage error → fail-open (tool error, not
+        // a disclosure finding). Only a clean exit 1 (≥1 finding) halts.
+        if (!r.error && r.status === 1) {
+          const report = (r.stderr || r.stdout || "").trim();
+          const sample = report.split("\n").slice(0, 12).join("\n");
+          return {
+            severity: "halt-and-report",
+            what_happened:
+              "scan-synced-disclosure.mjs --check found ≥1 structural " +
+              "disclosure on the synced surface in the staged `.claude/**` " +
+              "changes:\n" +
+              sample,
+            why:
+              "loom #263 synced-artifact disclosure fence — a staged " +
+              "synced artifact contains an operator hostname / non-" +
+              "Foundation org slug / org-derived runner label / operator " +
+              "home path / launchd|systemd service-label stem. Committing " +
+              "it propagates the disclosure to 30+ downstream consumers " +
+              "(the #252 class) where it is permanently in their git " +
+              "history and correlatable across all of them.",
+            agent_must_report: [
+              "Quote the scanner's redacted path:line + [SHAPE:<id>] rows " +
+                "(the «REDACTED» context — never reconstruct the raw token)",
+              "For each finding: genericize the disclosure in the synced " +
+                "artifact, and RELOCATE the operator-specific value into " +
+                "the gitignored operator-local companion (the #255 / #260 " +
+                "pattern — *.operator.local.* / *.local.json)",
+              "Re-stage the genericized files and re-run " +
+                "`node .claude/bin/scan-synced-disclosure.mjs --check` " +
+                "(exit 0) before re-attempting the commit",
+              "Do NOT allowlist a real operator/org token to force the " +
+                "scan green — that IS the #264 leak the scanner prevents",
+            ],
+            agent_must_wait:
+              "Do not retry the commit until the scanner exits 0 on the " +
+              "re-staged tree. If a finding is a genuine shape over-match " +
+              "on a Foundation-public token, surface it to the user — the " +
+              "allowlist fix is a scoped scanner edit, not a commit bypass.",
+            user_summary:
+              "synced-disclosure scan blocked the commit (loom #263) — " +
+              "genericize + relocate to the operator-local companion",
+          };
+        }
+      }
+    } catch {
+      // Scanner-internal/spawn error MUST NOT block the commit.
+      // Advisory-fail-open on tool error, identical to the branch-scope
+      // delegation above. A real disclosure is still caught by the
+      // fail-closed /sync Gate 2 backstop (sync-flow.md § Gate 2 step 0).
+    }
+  }
+
+  // BLOCK: Three-layer Bash mutation detection against trust-posture state files.
+  // Mitigates the gap where `permissions.deny` on Edit/Write is bypassable via
+  // bash redirects, file utils, or interpreter -c/-e/-m bodies. Pattern adopted
+  // from a downstream state-file-write-guard (issue #25, c0aeff73).
+  //
+  // Protected paths: .claude/learning/posture.json, posture.json.bak,
+  // violations.jsonl, violations.jsonl.*, .initialized
+  //
+  // Commit-message exception: `git commit -m "..."` or `git commit -F path`
+  // bodies are documentation prose, not executable commands. Skip detection
+  // entirely for those (segment-anchor isn't sufficient — the body can span
+  // many lines containing arbitrary shell-like syntax as documentation).
+  const STATE_PATH_RX =
+    /\.claude\/learning\/(?:posture\.json(?:\.bak|\.tmp\.\d+)?|violations\.jsonl(?:\.[A-Za-z0-9_-]+)?|\.initialized)\b/;
+  const isGitCommitWithBody = /^\s*git\s+commit\b[^|;]*(?:\s-m\s|\s-F\s)/.test(
+    command,
+  );
+  const stateFileMutation = isGitCommitWithBody
+    ? null
+    : detectStateFileMutation(command, STATE_PATH_RX);
+  if (stateFileMutation) {
+    try {
+      logLearningObservation(cwd, "rule_violation", {
+        rule: "trust-posture/state-file-mutation",
+        layer: stateFileMutation.layer,
+      });
+    } catch {}
+    return {
+      severity: "block",
+      what_happened: `Bash command attempts to mutate trust-posture state file (Layer ${stateFileMutation.layer}: ${stateFileMutation.kind}): ${command.slice(0, 120)}`,
+      why: "trust-posture/state-file-mutation — state files (posture.json, violations.jsonl, .initialized) are owned by hooks; agent edits are BLOCKED",
+      agent_must_report: [
+        "Quote the exact bash command that was attempted",
+        "State whether you intended to read, debug, or modify the state",
+        "If reading: use `cat` (allowed); if modifying: use /posture command instead",
+      ],
+      agent_must_wait:
+        "Do not retry. State-file mutations route through the /posture command (challenge-nonce gated), never directly.",
+      user_summary: `state-file mutation blocked (Layer ${stateFileMutation.layer})`,
+    };
+  }
+
+  // BLOCK: Dangerous commands (with evasion-resistant patterns)
+  const dangerousPatterns = [
+    {
+      pattern: /rm\s+(-[rRf]+\s+)*\/($|\s|\*)/,
+      message: "Blocked: rm on root filesystem",
+    },
+    {
+      pattern: /rm\s+--(?:recursive|force)\b/,
+      message: "Blocked: rm recursive/force with long flags",
+    },
+    { pattern: />\s*\/dev\/sd/, message: "Blocked: Writing to block device" },
+    { pattern: /mkfs\./, message: "Blocked: Filesystem formatting" },
+    { pattern: /dd\s+if=.*of=\/dev\/sd/, message: "Blocked: dd to disk" },
+    { pattern: /:\(\)\{\s*:\|:&\s*\};:/, message: "Blocked: Fork bomb" },
+    {
+      pattern: /(\w+)\(\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;\s*\1/,
+      message: "Blocked: Fork bomb variant",
+    },
+    { pattern: /chmod\s+-R\s+777\s+\//, message: "Blocked: chmod 777 on root" },
+    {
+      pattern: /curl.*\|\s*(ba)?sh/,
+      message: "WARNING: Piping curl to shell is dangerous",
+    },
+    {
+      pattern: /wget.*\|\s*(ba)?sh/,
+      message: "WARNING: Piping wget to shell is dangerous",
+    },
+  ];
+
+  for (const { pattern, message } of dangerousPatterns) {
+    if (pattern.test(command)) {
+      // Log dangerous command observation
+      try {
+        logLearningObservation(cwd, "rule_violation", {
+          rule: "security-dangerous-command",
+          message: message.substring(0, 200),
+          blocked: message.startsWith("Blocked"),
+        });
+      } catch {}
+
+      if (message.startsWith("Blocked")) {
+        return {
+          severity: "block",
+          what_happened: `Bash command matched dangerous pattern: ${command.slice(0, 120)}`,
+          why: `validate-bash-command/${message}`,
+          agent_must_report: [
+            "Quote the exact command that was attempted",
+            "State why the dangerous pattern matched (which clause)",
+            "If the user truly intended this, ask them to confirm in plain language; do NOT retry without confirmation",
+          ],
+          agent_must_wait:
+            "Do not retry the command. Wait for explicit user instruction.",
+          user_summary: message,
+        };
+      }
+      return { continue: true, exitCode: 0, message };
+    }
+  }
+
+  // Split on shell-segment separators so dangerous patterns inside quoted
+  // commit-message bodies (e.g. `git commit -m "...git reset --hard..."`) do NOT
+  // false-positive. Each segment's LEADING token determines the actual command.
+  const segments = command.split(/(?:\|\||&&|;|\|(?!\|))/);
+  const isLeadingCmd = (seg, re) => re.test(seg.trim());
+
+  // BLOCK: git reset --hard without preceding porcelain check (rules/git.md MUST 7)
+  if (segments.some((s) => isLeadingCmd(s, /^git\s+reset\s+--hard\b/))) {
+    return {
+      severity: "block",
+      what_happened: `Bash invoked \`git reset --hard\`: ${command.slice(0, 120)}`,
+      why: "git.md MUST 'git reset --hard MUST verify clean working tree' — prefer git reset --keep which aborts on local changes",
+      agent_must_report: [
+        "Show `git status --porcelain` output proving the working tree is clean",
+        "OR rewrite the command to use `git reset --keep <ref>` which aborts on dirty tree",
+        "Explain why --hard was chosen if the user explicitly authorized it",
+      ],
+      agent_must_wait:
+        "Do not retry --hard until porcelain check is shown OR user authorizes after seeing the risk.",
+      user_summary:
+        "git reset --hard blocked — needs porcelain check or --keep",
+    };
+  }
+
+  // BLOCK: force-push to main/master (segment-anchored to avoid commit-msg false-positives)
+  const forcePushPattern =
+    /^git\s+push\b[^|;]*--force(?:-with-lease)?\b[^|;]*\b(main|master)\b|^git\s+push\b[^|;]*\b(main|master)\b[^|;]*--force(?:-with-lease)?\b/;
+  if (segments.some((s) => isLeadingCmd(s, forcePushPattern))) {
+    return {
+      severity: "block",
+      what_happened: `Bash attempted force-push to protected branch: ${command.slice(0, 120)}`,
+      why: "git.md branch protection — main/master direct push is rejected; force-push is destructive",
+      agent_must_report: [
+        "State which branch was being force-pushed",
+        "Explain the user-facing reason (commit history rewrite? recovery? bug?)",
+        "Confirm whether the user explicitly authorized force-push to main/master IN THIS CONVERSATION",
+      ],
+      agent_must_wait:
+        "Do not retry. Force-push to main requires explicit per-action user authorization.",
+      user_summary: "force-push to main/master blocked",
+    };
+  }
+
+  // HALT-AND-REPORT: --no-verify (segment-anchored)
+  if (segments.some((s) => /(?:^|\s)--no-verify\b/.test(s.trim()))) {
+    return {
+      severity: "halt-and-report",
+      what_happened: `Bash command uses --no-verify: ${command.slice(0, 120)}`,
+      why: "git.md — pre-commit hooks exist for a reason; --no-verify requires explicit user instruction",
+      agent_must_report: [
+        "State which hook is being bypassed and why",
+        "Explain the underlying issue you would otherwise have to fix",
+        "Confirm whether the user authorized --no-verify IN THIS CONVERSATION",
+      ],
+      agent_must_wait:
+        "Do not retry without explicit user instruction. Investigate hook failure root cause first.",
+      user_summary: "--no-verify usage requires user authorization",
+    };
+  }
+
+  // ====================================================================
+  // ENFORCE: .env loading for pytest/python commands
+  // ====================================================================
+  const isPytest = /\bpytest\b/.test(command);
+  const isPython = /\bpython\b/.test(command) || /\bpython3\b/.test(command);
+
+  if (isPytest || isPython) {
+    // Log enriched test pattern observation
+    try {
+      const testPathMatch = command.match(
+        /(?:pytest|python3?\s+-m\s+pytest)\s+([^\s;|&]+)/,
+      );
+      const testPath = testPathMatch ? testPathMatch[1] : null;
+
+      // Determine test tier from path
+      let testTier = "unit";
+      if (testPath) {
+        if (/e2e|playwright|end.to.end/i.test(testPath)) testTier = "e2e";
+        else if (/integrat/i.test(testPath)) testTier = "integration";
+      }
+
+      logLearningObservation(cwd, "test_pattern", {
+        test_tier: testTier,
+        test_path: testPath,
+        is_pytest: isPytest,
+        command_flags: extractTestFlags(command),
+      });
+    } catch {}
+
+    // Check if .env exists
+    let envExists = false;
+    try {
+      envExists = fs.existsSync(path.join(cwd, ".env"));
+    } catch {}
+
+    if (envExists) {
+      // Check if command already loads .env (various patterns)
+      const loadsEnv =
+        /dotenv/.test(command) || // pytest-dotenv or dotenv CLI
+        /\.env/.test(command) || // References .env explicitly
+        /OPENAI_API_KEY=/.test(command) || // Explicit env var
+        /--env-file/.test(command) || // Docker-style env file
+        /source\s+\.env/.test(command) || // Shell sourcing
+        /export\s+/.test(command) || // Export pattern
+        /env\s+/.test(command); // env prefix
+
+      if (!loadsEnv && isPytest) {
+        return {
+          continue: true,
+          exitCode: 0,
+          message:
+            "REMINDER: .env exists but pytest may not load it. Consider: pytest-dotenv plugin OR prefix with env vars from .env. OPENAI_API_KEY and model settings are in .env!",
+        };
+      }
+    }
+  }
+
+  // WARN: Long-running commands outside tmux/background
+  const longRunningPatterns = [
+    /npm\s+run\s+(dev|start|serve)/,
+    /yarn\s+(dev|start|serve)/,
+    /python\s+-m\s+http\.server/,
+    /uvicorn/,
+    /flask\s+run/,
+    /node\s+.*server/,
+    /docker\s+compose\s+up(?!\s+-d)/,
+  ];
+
+  const inTmux = process.env.TMUX || process.env.TERM_PROGRAM === "tmux";
+  const isBackground =
+    /&\s*$/.test(command) ||
+    /--background/.test(command) ||
+    /-d\s/.test(command);
+
+  for (const pattern of longRunningPatterns) {
+    if (pattern.test(command) && !inTmux && !isBackground) {
+      return {
+        continue: true,
+        exitCode: 0,
+        message:
+          "WARNING: Long-running command. Consider using run_in_background or tmux.",
+      };
+    }
+  }
+
+  // WARN: Git push - reminder for security review
+  if (/git\s+push/.test(command)) {
+    return {
+      continue: true,
+      exitCode: 0,
+      message: "REMINDER: Did you run security-reviewer before pushing?",
+    };
+  }
+
+  // WARN: Git commit - reminder for review
+  if (/git\s+commit/.test(command)) {
+    return {
+      continue: true,
+      exitCode: 0,
+      message:
+        "REMINDER: Code review completed? Consider delegating to reviewer.",
+    };
+  }
+
+  // Log cargo test / cargo clippy observations for Rust repos
+  const isCargoTest = /\bcargo\s+test\b/.test(command);
+  const isCargoClippy = /\bcargo\s+clippy\b/.test(command);
+  const isCargoBuil = /\bcargo\s+build\b/.test(command);
+
+  if (isCargoTest || isCargoClippy || isCargoBuil) {
+    try {
+      const crateMatch = command.match(/-p\s+(\S+)/);
+      logLearningObservation(cwd, "test_pattern", {
+        test_tier: isCargoTest
+          ? "cargo_test"
+          : isCargoClippy
+            ? "clippy"
+            : "cargo_build",
+        test_path: crateMatch ? crateMatch[1] : "workspace",
+        is_rust: true,
+        command_flags: extractTestFlags(command),
+      });
+    } catch {}
+  }
+
+  return { continue: true, exitCode: 0, message: "Validated" };
+}
+
+/**
+ * Extract test-relevant flags from command for learning.
+ */
+/**
+ * Three-layer mutation detection for trust-posture state files.
+ *
+ * Per issue #25 (esperie-enterprise/loom) — adopted from a downstream consumer's
+ * state-file-write-guard (commit c0aeff73). Closes the bypass gap where
+ * settings.json `permissions.deny` on Edit/Write does NOT cover bash-mediated
+ * mutations (redirects, file utilities, interpreter -c/-e/-m bodies).
+ *
+ * Returns { layer, kind } if a mutation is detected against any path matching
+ * `pathRx`, else null.
+ *
+ * Per-line scanning: matchers operate on `[^|\\n]*` so multi-line commands
+ * cannot cross-match a verb on one line with a protected path on a later line.
+ */
+function extractTestFlags(command) {
+  const flags = [];
+  if (/-x\b/.test(command)) flags.push("fail-fast");
+  if (/--tb=/.test(command)) flags.push("traceback");
+  if (/-v\b|--verbose\b/.test(command)) flags.push("verbose");
+  if (/--cov\b/.test(command)) flags.push("coverage");
+  if (/-k\s/.test(command)) flags.push("keyword-filter");
+  if (/--workspace\b/.test(command)) flags.push("workspace");
+  if (/--release\b/.test(command)) flags.push("release");
+  return flags;
+}
