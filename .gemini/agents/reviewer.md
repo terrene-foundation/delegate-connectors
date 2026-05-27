@@ -3,8 +3,6 @@ name: reviewer
 description: Quality reviewer. Use for code review, doc consistency, cross-reference accuracy, or code example validation.
 tools:
   - read_file
-  - write_file
-  - replace
   - run_shell_command
   - grep_search
   - glob

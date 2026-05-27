@@ -1,6 +1,6 @@
 ---
 name: i-polish
-description: "Loom command: i-polish"
+description: "Visual refinement workflow for frontend artifacts — typography, spacing, motion."
 ---
 
 # /i-polish - Visual Refinement Workflow

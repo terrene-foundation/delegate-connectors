@@ -70,23 +70,13 @@ When delegating IMPLEMENTATION work (file edits, commits, build/test invocation,
 
 ## MUST: Audit/Closure-Parity Verification Specialist Has Bash + Read
 
-When delegating a /redteam round whose mission includes **closure-parity verification** (mapping prior-wave findings to delivered code via `gh pr view`, `pytest --collect-only`, `grep`, `ast.parse()`, `find`), the orchestrator MUST select a specialist whose tool set includes `Bash` AND `Read`. Read-only analyst (`Read, Grep, Glob`) MUST NOT be assigned closure-parity verification — its tool set silently FORWARDS verification rows the next round must redo. Extends § "Verify Specialist Tool Inventory" above from IMPLEMENTATION to AUDIT delegation.
+When delegating a /redteam round whose mission includes **closure-parity verification** (mapping prior-wave findings to delivered code via `gh pr view`, `pytest --collect-only`, `grep`, `ast.parse()`, `find`, `cargo nextest`), the orchestrator MUST select a specialist whose tool set includes `Bash` AND `Read`. Read-only analyst (`Read, Grep, Glob`) MUST NOT be assigned closure-parity verification — its tool set silently FORWARDS verification rows the next round must redo. Extends § "Verify Specialist Tool Inventory" above from IMPLEMENTATION to AUDIT delegation.
 
-(See **Example 4** in the examples slot below for closure-parity dispatch.)
+(See **Example 4** for closure-parity dispatch; **Example 5** for the delegation-time scan pattern.)
 
-**Delegation-time detection signals (orchestrator self-check before launch).** Before delegating, the orchestrator MUST scan the prompt-being-drafted for closure-parity mission markers. Presence of ANY of the following in the prompt obligates a Bash+Read specialist (general-purpose, pact-specialist, or framework specialist with full tool inventory) — selecting analyst with these markers present is BLOCKED:
+**BLOCKED (summary):** "analyst is the audit specialist" / "reviewer round picks up the FORWARDED rows" / "agent will figure out it lacks the tool". Full corpus + delegation-time detection signals (verification verbs / Bash-required commands / closure-parity nouns) + BLOCKED auto-promotion rationalizations + multi-incident Origin evidence: see `.claude/skills/30-claude-code-patterns/closure-parity-specialist-discipline.md`.
 
-- Verification verbs: "verify closure", "closure parity", "FORWARDED → VERIFIED", "convert FORWARDED rows", "map findings to delivered code"
-- Bash-required commands named in mission: `gh pr view`, `gh pr diff`, `gh issue view`, `pytest --collect-only`, `ast.parse(`, `cargo nextest`, `find -type f`, `grep -c`
-- Closure-parity nouns: "Round N closure parity", "post-merge verification", "wave-N → wave-N+1 audit", "redteam round N convergence check"
-
-The orchestrator MUST run this scan as a pre-flight before EVERY closure-parity-class delegation; surfacing the mismatch at delegation-time is O(1), re-launching after the agent FORWARDS rows is O(N) on row count and burns the round.
-
-(See **Example 5** in the examples slot below for the delegation-time scan pattern.)
-
-**BLOCKED auto-promotion rationalizations:** "I'll let the agent figure out it lacks the tool" / "Analyst handles audit by name, the markers don't override" / "Execution-time error is fine; the agent will surface it" / "Skipping the scan saves the orchestrator one step".
-
-**Why:** Tool-inventory mismatch costs one full audit round; verifying pre-launch is O(1) while re-launch is O(N) on row count. The delegation-time scan converts the Bash+Read specialist mandate from a recall-it-yourself principle into a draft-time check the orchestrator runs every cycle.
+**Why:** Tool-inventory mismatch costs one full audit round; verifying pre-launch is O(1) while re-launch is O(N) on row count.
 
 ## MUST: Worktree Isolation for Compiling Agents
 
@@ -250,6 +240,10 @@ When a gate-level review (reviewer, security-reviewer, gold-standards-validator)
 **Why:** Same-bug-class gaps surfaced during review cost the least to fix while the context is loaded — the invariants, call graph, and domain model are all warm in attention. Filing a follow-up issue requires the next session to reload the entire context from scratch, typically 2–5× the marginal cost of continuing. See Origin for 2026-04-20 + cross-class evidence (kailash-rs PRs #735/#736, kailash-kaizen PR #836).
 
 **Bounded by the shard budget.** This rule does NOT override MUST Rule 1 (shard threshold). If the surfaced gap exceeds ≤500 LOC load-bearing / ≤5–10 invariants / ≤3–4 call-graph hops, filing the follow-up issue IS the correct disposition — the gap is a new shard, not a continuation of the current one.
+
+## Multi-Operator Capacity Considerations
+
+Concurrent-operator capacity guidance — per-operator capacity bounded per-`verified_id` (not per-session), cross-operator parallelization throughput multiplier (NON-SAME adjacency only), `/claim`-record discipline as the coordination signal — lives in `rules/multi-operator-coordination.md` §8. That rule is `scope: path-scoped` so the capacity clauses load only on paths where multi-operator coordination applies, keeping this baseline rule under its per-rule emission budget.
 
 ## MUST NOT (Sharding)
 

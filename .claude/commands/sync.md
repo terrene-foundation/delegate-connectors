@@ -20,6 +20,20 @@ Read `.claude/VERSION` → `type` field:
 - `coc-use-template` / `coc-build` → **MUST verify** the repo is the actual template/BUILD repo before routing to loom. Check `basename $(pwd)` + `git remote get-url origin` (normalize SSH `git@host:owner/repo.git` → `owner/repo`) against known repos: `kailash-coc-claude-{py,rs,rb,prism}`, `kailash-{py,rs,prism}`. If match → "receives artifacts from loom/, run `/sync` at loom/". If no match → treat as `coc-project` and auto-correct VERSION in-place (type → `coc-project`, upstream → `{template, template_repo, template_version, synced_at, sdk_packages}` per `.claude/hooks/lib/version-utils.js::correctTemplateDerivedVersion`), then Downstream Sync.
 - Missing → ask user what type this repo is
 
+## Step 0a: Pre-Emit Validation (coc-source — loom/ only)
+
+For `coc-source`, **before Gate 1**, run the rule-corpus mechanical sweep:
+
+```bash
+node .claude/bin/validate-emit.mjs \
+  --allow=command-line-cap:.claude/commands/sync-to-build.md \
+  --allow=command-line-cap:.claude/commands/test-harness-probe.md
+```
+
+Exit 1 → HALT /sync; surface the report. The validator (issue #350 Stage 2) gates 7 structural invariants: frontmatter, line cap, read-only-specialist tools, tool canonicality, mirror+exclusion (skills), paths-glob ↔ annotation consistency, audit-fixture coverage (per `rules/cc-artifacts.md` Rule 9). Each `--allow=<check>:<path>` override MUST be recorded in the /sync commit message with a tracking issue (the two `command-line-cap` overrides above are tracked by issue #356 — `sync-to-build` + `test-harness-probe` extractions).
+
+**New-rule discipline**: every new rule landed at loom MUST also land either a corresponding validator check OR a `no-check: <reason>` annotation in the same PR. Fixtures + structural probes: `.claude/audit-fixtures/validate-emit/`.
+
 ## Two Gates (coc-source — loom/ only)
 
 **loom is the central splitter, not an author.** loom does NOT originate artifact changes — it ingests proposals from TWO upstream streams (BUILD repos for SDK code; USE-template repos for COC-artifact improvements per `guides/co-setup/09-proposal-protocol.md` Step 7b), splits global vs variant at Gate 1, then dual-distributes: `/sync-to-build` pushes canonical back to BUILD repos, `/sync` distributes to USE templates (which downstream repos pull via their own `/sync`).
