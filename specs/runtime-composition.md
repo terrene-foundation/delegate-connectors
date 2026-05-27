@@ -29,13 +29,15 @@ runtime = DelegateRuntime(
     envelope=envelope, identity=identity, signer=signer,
     posture="L5_DELEGATED",
 )
-# 5. execute — SYNC, returns RuntimeExecutionResult
-result = runtime.execute(input_payload={...})
+# 5. execute — ASYNC coroutine, awaits to a RuntimeExecutionResult
+result = await runtime.execute(input_payload={...})
 ```
 
 ## Contracts
 
-- `runtime.execute(input_payload: dict) -> RuntimeExecutionResult` — synchronous.
+- `async runtime.execute(input_payload: dict) -> RuntimeExecutionResult` — coroutine
+  (`inspect.iscoroutinefunction(DelegateRuntime.execute) is True`, kailash 2.26.2);
+  callers MUST `await` it. The return annotation is the awaited result type.
 - `RuntimeExecutionResult.to_dict()` is the input to `assert_receipts_agree(a, b)`
   (cross-impl audit-chain agreement; timestamps excluded from the deep compare).
 - Envelope monotonic-tightening: widening MUST raise `EnvelopeWideningError`.

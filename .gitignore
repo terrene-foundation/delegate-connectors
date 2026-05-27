@@ -69,3 +69,6 @@ secrets/
 **/scripts/data/
 **/scripts/outputs/
 **/scripts/*.log
+
+# Journal-hook runtime bookkeeping (per-clone skip log; not source)
+**/.journal-skipped.log
