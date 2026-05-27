@@ -292,7 +292,18 @@ class EmailConnector(Connector):
         executed via the audited :meth:`write` path (so it produces a verifiable
         envelope as a side effect), and the invocation result reports the
         external side effect for the dispatch surface's audit chain.
+
+        Authentication runs FIRST: :meth:`authenticate` resolves the dispatch
+        identity to a ``Principal`` and raises ``ConnectorAuthenticationError``
+        (fail-closed ``Reject``) for an unknown sender. The error propagates and
+        NO message is constructed and NO SMTP send fires — the unknown-sender
+        Reject is enforced on the dispatch hot path, not just the standalone
+        ``authenticate`` call.
         """
+        # Fail-closed gate: unknown identity -> ConnectorAuthenticationError,
+        # propagated before any message construction or SMTP send.
+        await self.authenticate(identity, envelope)
+
         message = OutboundMessage(
             sender=input_payload["sender"],
             recipient=input_payload["to"],
