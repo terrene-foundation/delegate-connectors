@@ -1,0 +1,23 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Single Mailpit service: real SMTP send + IMAP read in one container.
+# Tier-2/3 integration tests connect to these ports. No Postgres, no PACT
+# (the shipped kailash.delegate runtime audit is in-memory).
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: delegate-email-mailpit
+    restart: unless-stopped
+    environment:
+      # Enable the IMAP server (off by default) on 1143.
+      MP_IMAP_BIND_ADDR: "0.0.0.0:1143"
+      MP_IMAP_AUTH_ACCEPT_ANY: "true"
+      MP_IMAP_AUTH_ALLOW_INSECURE: "true"
+      # Accept any SMTP auth so the connector's env creds work without setup.
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025" # SMTP
+      - "1143:1143" # IMAP
+      - "8025:8025" # Web UI

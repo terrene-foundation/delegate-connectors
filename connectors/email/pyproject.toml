@@ -1,0 +1,49 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "delegate-connector-email"
+dynamic = ["version"]
+description = "OSS email connector for the Terrene Delegate substrate (kailash.delegate)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Terrene Foundation" }]
+keywords = ["kailash", "delegate", "connector", "email", "smtp", "imap"]
+dependencies = [
+    # kailash.delegate namespace shipped in 2.24.0; dev/CI pins 2.26.2.
+    "kailash>=2.24.0",
+    # Ed25519Verifier requires the cryptography lib (kailash [trust] extra
+    # ships it; declared here because this connector composes a real
+    # Ed25519Verifier directly).
+    "cryptography>=42.0",
+    # async transports.
+    "aiosmtplib>=3.0",
+    "aioimaplib>=1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/terrene-foundation/delegate-connectors"
+
+[tool.hatch.version]
+path = "src/delegate_connectors/email/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/delegate_connectors"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: real-infra Tier-2/3 tests (require a running Mailpit container)",
+]
