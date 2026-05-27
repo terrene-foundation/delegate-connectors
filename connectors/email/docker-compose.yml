@@ -1,0 +1,47 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Two services, both real infrastructure (no mocks at the boundary):
+#
+#   * mailpit  — real SMTP send + a REST search API. Used by the SMTP-arrival
+#                assertion (test_smtp_roundtrip) and the e2e composition test.
+#                Mailpit v1.30.0 ships NO IMAP server (the MP_IMAP_* knobs are
+#                a no-op on that build — see workspaces/email/journal/0007-GAP),
+#                so it cannot back the inbound IMAP round-trip.
+#   * greenmail — exposes BOTH a real SMTP server (3025) AND a real IMAP server
+#                (3143) in one JVM. Backs the inbound IMAP round-trip: the test
+#                sends via GreenMail SMTP and fetches the delivered message back
+#                via GreenMail IMAP through the connector's `read` path.
+#
+# No Postgres, no PACT (the shipped kailash.delegate runtime audit is in-memory).
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: delegate-email-mailpit
+    restart: unless-stopped
+    environment:
+      # Accept any SMTP auth so the connector's env creds work without setup.
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI + REST API
+
+  greenmail:
+    image: greenmail/standalone:latest
+    container_name: delegate-email-greenmail
+    restart: unless-stopped
+    environment:
+      # Enable a real SMTP server (3025) AND a real IMAP server (3143), bound to
+      # 0.0.0.0 so Docker port-forwarding reaches them. auth.disabled lets the
+      # connector log in as any recipient (mailboxes are auto-created on first
+      # login) without provisioning users — no credentials are hardcoded.
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.smtp
+        -Dgreenmail.setup.test.imap
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.auth.disabled
+        -Dgreenmail.verbose
+    ports:
+      - "3025:3025" # SMTP
+      - "3143:3143" # IMAP

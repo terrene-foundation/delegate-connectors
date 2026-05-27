@@ -15,12 +15,17 @@
 
 ## What This Is
 
-Each `connectors/<channel>/` directory is a fresh Python package implementing the `Connector` interface from the OSS spine (`kailash.delegate`). Per the Terrene Delegate Spec v0, the connector responsibility is small and load-bearing:
+Each `connectors/<channel>/` directory is a fresh Python package implementing the `Connector` ABC from the OSS spine (`kailash.delegate`, kailash 2.26.2). The shipped contract is **4 methods + 3 trust properties** (verified against the installed SDK):
 
-- `connect()` — wire setup
-- `identify()` — `Principal` resolution against `PrincipalDirectory`
-- `authenticate()` — `Posture` + `Genesis` write
-- `normalize()` — channel envelope → `InboundIntentEnvelope`
+- `authenticate(identity, envelope) -> Principal` — resolve the dispatch identity to a `Principal` against a `PrincipalDirectory`
+- `write(action, *, identity, envelope) -> SignedActionEnvelope` — run a write thunk under audit; return a signed action envelope
+- `read(query, *, identity, envelope) -> (payload, AttestedReadReceipt)` — run a read thunk under audit; return the value + an attested receipt
+- `invoke(payload, *, identity, envelope) -> ConnectorInvocationResult` — the dispatch hot-path entry
+- properties: `auth_verifier -> AuthVerifier`, `ledger -> KnowledgeLedger`, `revocation -> RevocationChannel`
+
+Runtime composition uses `DelegateRuntime(...)` + `DispatchSurface(...)` directly (`runtime.execute(payload)`); there is **no** `Delegate.compose(...)`, `pact_engine=`, or `await delegate.run()` — `Delegate` is an alias of `DelegateRuntime`. Audit is in-memory (`AuditChainEngine`); trust verification is `Ed25519Verifier`.
+
+> The earlier `connect() / identify() / authenticate() / normalize()` contract and the `Delegate.compose` / `pact_engine` / `await run()` runtime shape described a pre-implementation design; none of `connect`, `identify`, `normalize`, `compose`, `pact_engine`, or `run` exist in the shipped `kailash.delegate` API. The list above is the verified shipped contract.
 
 Connectors do NOT own dispatch, audit-chain writes, trust gates, classification, or supervisor wiring. Those are spine concerns.
 
