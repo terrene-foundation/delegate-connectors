@@ -47,4 +47,5 @@ testpaths = ["tests"]
 markers = [
     "integration: real-infra Tier-2/3 tests (require a running GreenMail/Mailpit container)",
     "regression: regression tests guarding a specific fixed bug (NEVER deleted)",
+    "conformance: canonical conformance vector tests (well-formedness now; per-vector outcome xfail-gated on kailash-py#1182)",
 ]
