@@ -31,11 +31,70 @@ __all__ = [
     "SmtpTransport",
     "SendResult",
     "OutboundMessage",
+    "HeaderInjectionError",
+    "validate_header_field",
 ]
 
 
 class SmtpConfigError(ValueError):
     """Raised when required SMTP configuration is absent from the environment."""
+
+
+class HeaderInjectionError(ValueError):
+    """Raised when a header-bound field carries CR/LF/NUL or control chars.
+
+    SMTP/MIME headers are line-delimited (CRLF). An unvalidated ``to`` /
+    ``subject`` / ``sender`` containing ``\\r``, ``\\n``, or ``\\x00`` lets an
+    attacker inject additional headers (e.g. a blind ``Bcc:`` for silent
+    exfiltration) or split the message. This typed error is raised at the
+    :class:`OutboundMessage` construction boundary — BEFORE any MIME message is
+    built or any byte transits SMTP — so every send route is covered.
+    """
+
+
+# CR, LF, and NUL are the header-injection vectors (header lines are CRLF
+# delimited; NUL truncates in some C-string MTAs). We also reject every other
+# C0 control char (< 0x20, except this set is already covered) and DEL (0x7f)
+# in header-bound fields, plus leading/trailing whitespace which can fold
+# headers or be stripped inconsistently by relays.
+_FORBIDDEN_HEADER_CHARS = frozenset("\r\n\x00")
+
+
+def validate_header_field(field_name: str, value: str) -> str:
+    """Return ``value`` unchanged iff it is safe for a single MIME header line.
+
+    Rejects (raising :class:`HeaderInjectionError`):
+
+    - any ``\\r``, ``\\n``, or ``\\x00`` anywhere in the value (header injection),
+    - any other C0 control character (``\\x01``–``\\x1f``) or DEL (``\\x7f``),
+    - leading or trailing whitespace (header-folding / inconsistent-strip risk).
+
+    Applied to every header-bound field (``sender``, ``to``, ``subject``) at the
+    :class:`OutboundMessage` boundary so no send route can bypass it.
+    """
+    if not isinstance(value, str):
+        raise HeaderInjectionError(
+            f"header field {field_name!r} MUST be a str; got {type(value).__name__}"
+        )
+    for ch in value:
+        if ch in _FORBIDDEN_HEADER_CHARS:
+            raise HeaderInjectionError(
+                f"header field {field_name!r} contains a forbidden control "
+                f"character (CR/LF/NUL) — header injection rejected"
+            )
+        # Any remaining C0 control (0x01-0x1f) or DEL (0x7f). CR/LF/NUL are
+        # already caught above; this catches VT, FF, ESC, etc.
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            raise HeaderInjectionError(
+                f"header field {field_name!r} contains a forbidden control "
+                f"character (0x{ord(ch):02x}) — header injection rejected"
+            )
+    if value != value.strip():
+        raise HeaderInjectionError(
+            f"header field {field_name!r} has leading/trailing whitespace — "
+            "rejected (header-folding risk)"
+        )
+    return value
 
 
 def _require_env(name: str) -> str:
@@ -90,13 +149,30 @@ class SmtpConfig:
 
 @dataclass(frozen=True, slots=True)
 class OutboundMessage:
-    """A message to send. Pure data — no transport coupling."""
+    """A message to send. Pure data — no transport coupling.
+
+    Header-bound fields (``sender``, ``recipient``, ``subject``) are validated
+    at construction (``__post_init__``) via :func:`validate_header_field`, which
+    rejects CR/LF/NUL + control chars. Because EVERY send route — the dispatch
+    ``invoke`` hot path and any direct ``write``/``to_mime`` call — builds an
+    ``OutboundMessage`` first, this single boundary covers all of them: a
+    crafted ``to``/``subject``/``sender`` raises :class:`HeaderInjectionError`
+    before any MIME message is constructed or any byte transits SMTP.
+    """
 
     sender: str
     recipient: str
     subject: str
     body: str
     message_id: str = field(default_factory=lambda: make_msgid())
+
+    def __post_init__(self) -> None:
+        # Validate every header-bound field at the construction boundary. Raises
+        # HeaderInjectionError (ZERO SMTP send happens — the message never even
+        # reaches to_mime / SmtpTransport.send).
+        validate_header_field("sender", self.sender)
+        validate_header_field("recipient", self.recipient)
+        validate_header_field("subject", self.subject)
 
     def to_mime(self) -> EmailMessage:
         """Construct a well-formed ``EmailMessage`` from the fields."""

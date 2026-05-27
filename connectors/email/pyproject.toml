@@ -45,5 +45,6 @@ packages = ["src/delegate_connectors"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "integration: real-infra Tier-2/3 tests (require a running Mailpit container)",
+    "integration: real-infra Tier-2/3 tests (require a running GreenMail/Mailpit container)",
+    "regression: regression tests guarding a specific fixed bug (NEVER deleted)",
 ]
