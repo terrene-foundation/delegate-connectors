@@ -1,6 +1,6 @@
 ---
 name: i-audit
-description: "Loom command: i-audit"
+description: "Design quality audit with AI-slop detection — enterprise SaaS UI inspection."
 ---
 
 # /i-audit - Design Quality Audit with AI Slop Detection

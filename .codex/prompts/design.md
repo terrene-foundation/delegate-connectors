@@ -1,6 +1,6 @@
 ---
 name: design
-description: "Loom command: design"
+description: "UI/UX design principles quick reference: layout, hierarchy, accessibility, design systems."
 ---
 
 # /design - UI/UX Design Principles Quick Reference

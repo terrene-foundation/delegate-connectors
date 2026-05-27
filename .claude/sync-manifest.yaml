@@ -302,7 +302,30 @@ cli_variants:
         # restoring rs-axis headroom from 2.54% → ~7.75% under block_cap.
         per_rule_size_budget_bytes:
           "zero-tolerance.md": 9000
-          "security.md": 6300
+          # security.md raised 6300 → 7200 at #290 bundle 2026-05-19.
+          # #290's slot-parser fix unmasked the rs security.md variant
+          # (silently dropped pre-fix): it carries 3 GENUINE Rust security
+          # MUST sections (constant-time credential compare, fail-closed
+          # defaults, network transport hardening — each with red-team
+          # Origin: 0021-RISK/0018-RISK/R3 commits). composed rs emission
+          # 8374B > old +30% threshold 8190B. Per the agents.md(#200) +
+          # git.md(Shard D) precedent in this same block: first-order
+          # security MUST content with documented value-anchors —
+          # abridgement is not the right disposition; raise the budget.
+          # 8374B sits at ~89% of new +30% threshold (9360B). This raise
+          # clears the per-rule BLOCK only. The duplicated illustrative
+          # code in the rs variant was separately condensed (raw −1.5KB,
+          # zero MUST/Why/Rust-section loss) — but the abridgement
+          # protocol governs EMITTED size, so the condense moved the
+          # aggregate 0B (measured). Aggregate-floor restoration is NOT
+          # this raise nor the condense; it is Plan-09 Shard 8 — the
+          # security.md GLOBAL slot-partition (security.md IS a baseline
+          # rule, so partitioning its global so rs inherits the universal
+          # body reclaims baseline bytes). NOT Shard 6 (testing.md): that
+          # rule is priority:10 path-scoped, NOT in the 9-rule baseline
+          # the v6.2 floor measures — measured 0B aggregate delta. See
+          # journal/0109 (corrects the journal/0108 mis-attribution).
+          "security.md": 7200
           # worktree-isolation.md DEMOTED to path-scoped at v2.19.0 —
           # frees ~6,166 B baseline emission, absorbs the new
           # coc-sync-landing.md rule, restores cap-headroom from
@@ -594,6 +617,15 @@ tiers:
     - rules/hook-output-discipline.md
     - rules/facade-manager-detection.md
     - rules/self-referential-codify.md
+    # F14 M8 Shard F (2026-05-22): universal CO governance rules — apply to
+    # any multi-operator COC repo (py/rs/rb + base). Subscribed by every
+    # variant's [cc, co, coc] (or [cc, co, onboarding] for base).
+    # multi-operator-coordination.md: identity + log + claims + posture + lifecycle hooks
+    # knowledge-convergence.md: artifact splits + codify-lease + team-memory + onboard
+    # user-flow-validation.md: deliverable-discipline (co-owner-directed origination, journal/0134)
+    - rules/multi-operator-coordination.md
+    - rules/knowledge-convergence.md
+    - rules/user-flow-validation.md
   coc:
     # Foundation-branding rules — moved from `co` tier 2026-05-07. These
     # apply to Kailash/Foundation projects only; the language-agnostic
@@ -753,6 +785,60 @@ tiers:
     # Without this entry, the rule's primary cross-reference points
     # to a non-existent directory. Same classification cycle.
     - skills/32-trust-posture/**
+    # ─────────────────────────────────────────────────────────────
+    # F14 multi-operator COC commands + skill + team-memory
+    # (M9.3 manifest fix 2026-05-22, journal/0138).
+    #
+    # Origin: declared in `multi-operator-m0-m5` + `multi-operator-m7`
+    # tiers below, neither of which any variant subscribed to. The R1
+    # reviewer caught the identical pattern on M8 rules 12 hours ago
+    # (multi-operator-m8 → `co:`); this fix applies the same orphan-tier
+    # R1 pattern to M0-M5 commands + M7 onboard surface, placing them
+    # in `coc:` because they are operational tooling (not CO methodology)
+    # and route alongside the runtime infra (hooks/**, hooks/lib/**, bin/**)
+    # already auto-included in `coc:`.
+    #
+    # Cross-refs: `rules/multi-operator-coordination.md` MUST clauses cite
+    # /claim, /claims, /release-claim, /whoami, /onboard; rules without
+    # commands = unactionable cross-refs = orphan-detection failure mode.
+    # ─────────────────────────────────────────────────────────────
+    # M3 single-writer + claim-system commands (per journal/0129):
+    - commands/claim.md
+    - commands/claims.md
+    - commands/release-claim.md
+    # M0 whoami / operator-registration command (per architecture §8 A1):
+    - commands/whoami.md
+    # M7 onboard surface (per M7 INTEGRATION-NOTES.md):
+    - commands/onboard.md
+    - skills/41-onboard/**
+    - team-memory/README.md
+    # team-memory/canonical-build-targets.md is `tier: example` per M7
+    # INTEGRATION-NOTES.md — illustrative only. Gate-1 classification
+    # at /sync may downgrade to SKIP if the content is non-portable.
+    - team-memory/canonical-build-targets.md
+    # ─────────────────────────────────────────────────────────────
+    # /certify — knowledge-gate for new devs/consultants
+    # (co-owner-directed 2026-05-25, journal/0158). Three phases
+    # (Brief → Probe → Gate at 100%). Per-repo question bank lives
+    # in the CONSUMER repo at `specs/_certification.yaml`; loom ships
+    # a starter template at `templates/specs/_certification.yaml`
+    # for downstream repos to copy and curate. Same shape as the M7
+    # onboard surface (command + skill, global / not variant).
+    # ─────────────────────────────────────────────────────────────
+    - commands/certify.md
+    - skills/42-certify/**
+    # Starter template: downstream repos copy this to specs/_certification.yaml
+    # once on first /certify use, then curate. The CONSUMER-side
+    # specs/_certification.yaml is NOT shipped via /sync (lives in each
+    # downstream repo's own git history); only the loom-side starter is.
+    #
+    # EMISSION POLICY (PR #355 R1 security MED-4 closure): the asset is
+    # YAML data with no CLI-divergent body — copy-as-is to every CLI
+    # surface that subscribes the coc tier (CC, Codex, Gemini emission all
+    # ship the identical file). Not in cli_variants (no per-CLI overlay
+    # exists or is permitted; bank schema is CLI-invariant); not in
+    # cli_emit_exclusions (intentionally shipped to all three).
+    - templates/specs/_certification.yaml
   # ─────────────────────────────────────────────────────────────
   # ONBOARDING TIER — Stack-agnostic onboarding artifacts for the
   # base variant. Added 2026-05-06 v2.21.0 to support the non-Kailash,
@@ -768,6 +854,63 @@ tiers:
     - skills/40-stack-onboarding/**
     - commands/onboard-stack.md
     - rules/stack-detection.md
+  # ─────────────────────────────────────────────────────────────
+  # MULTI-OPERATOR COC TIER — Shard M6 D + M7 E artifacts
+  # (workspaces/multi-operator-coc, architecture v11). Subscribed by
+  # the coc tier alongside the existing hook + lib globs.
+  # ─────────────────────────────────────────────────────────────
+  # Hook libraries (M6 D): coc-append.js, coc-ledger.js,
+  # journal-body-anchor.js, journal-reserve.js, session-notes-layout.js
+  # — all auto-included via the `hooks/lib/**` glob in the coc tier
+  # above. No explicit entries needed; listed here for discoverability.
+  #
+  # M6 D commands /wrapup + /journal: already in coc tier (lines 581+).
+  # The M6 D updates (per-operator layout consumption + body-anchor on
+  # close) edit the same files; no new manifest entry needed.
+  #
+  # M7 E artifacts (pre-declared so M7's land doesn't require manifest
+  # amendment; entries below are no-ops on disk until M7 lands its
+  # files, and the emit.mjs manifest-completeness validator tolerates
+  # not-yet-present paths under a category declaration). M7 INTEGRATION-
+  # NOTES.md is the canonical source for this list.
+  multi-operator-m7:
+    # F14 M9.3 manifest fix MOVED to `coc:` tier 2026-05-22 (orphan-tier R1 pattern).
+    # The M7 onboard surface (commands/onboard.md, skills/41-onboard/**,
+    # team-memory/**) is now in the `coc:` tier alongside the M0-M5 commands
+    # — `coc:` is universally subscribed by py/rs/rb. Empty list retained
+    # for tier-name greppability in journal references.
+    # Audit trail: journal/0138-DECISION-m9-3-manifest-fix-orphan-tiers-2026-05-22.md.
+    []
+  # ─────────────────────────────────────────────────────────────
+  # MULTI-OPERATOR M0–M5 COMMANDS + M8 RULES — Shard F-3 (2026-05-22)
+  # ─────────────────────────────────────────────────────────────
+  # Commands authored across M0–M5 that are not auto-included by the
+  # coc-tier globs above. Hooks (M0–M6 D) auto-include via `hooks/**` +
+  # `hooks/lib/**`; bin scripts auto-include via `bin/**`. Commands need
+  # explicit tier-list entries.
+  #
+  # Rules authored at M8 (Shard F-1 + F-2). knowledge-convergence.md +
+  # multi-operator-coordination.md are NEW global rules; they belong in
+  # the `co` tier (universal CO governance — apply to any multi-operator
+  # COC repo). Tier-listed here for greppability + manifest-completeness
+  # validator; if relocated to `co:` block above, prefer this section
+  # remain for cross-reference.
+  multi-operator-m0-m5:
+    # F14 M9.3 manifest fix MOVED to `coc:` tier 2026-05-22 (orphan-tier R1 pattern).
+    # The 4 commands (claim, claims, release-claim, whoami) are now in the
+    # `coc:` tier alongside the M7 onboard surface and the M8 rules' runtime
+    # infra — `coc:` is universally subscribed by py/rs/rb. Empty list
+    # retained for tier-name greppability in journal references.
+    # Audit trail: journal/0138-DECISION-m9-3-manifest-fix-orphan-tiers-2026-05-22.md.
+    []
+  multi-operator-m8:
+    # F14 M8 Shard F rules MOVED to `co:` tier 2026-05-22 (R1 reviewer HIGH-1).
+    # The `multi-operator-m8` tier was orphaned — no repo subscribed to it,
+    # so rules declared here did not propagate downstream. The 3 new rules
+    # (multi-operator-coordination, knowledge-convergence, user-flow-validation)
+    # are now in the `co:` tier alongside other universal CO governance rules.
+    # Empty list retained for tier-name greppability in journal references.
+    []
 
 # ─────────────────────────────────────────────────────────────────
 # VARIANT DECLARATIONS
@@ -789,7 +932,26 @@ variants:
     rb: variants/rb/rules/patterns.md
   rules/agents.md:
     py: null
-    rs: variants/rs/rules/agents.md
+    # rs: null — Plan-09 Shard 2 (journal/0107). The former
+    # variants/rs/rules/agents.md was a stale pre-#200 full-nb copy with
+    # zero genuine rs divergence; it dropped the global's #200 slot:examples
+    # partition + 14 global lines. rs now inherits the correct current
+    # global agents.md. MEASURED net effect (clean HEAD vs bundle, codex
+    # rs): this DELETE frees only −702B, NOT the ~4.5KB the journal/0107
+    # raw file-delta implied (abridgement decouples emitted from raw size).
+    # The #290 slot-parser fix in this same bundle correctly unmasks the
+    # previously-silently-dropped rs security.md variant (+~2,387B genuine
+    # Rust security MUST content that SHOULD ship). NET bundle effect:
+    # +1,685B → codex rs 9.62% / gemini 9.66% (BELOW the v6.2 10% floor).
+    # This bundle deliberately SPENDS rs headroom to fix a HIGH
+    # silent-wrong-output bug; it is NOT a headroom-relief anchor. Floor
+    # restoration is Plan-09 Shard 8 — the security.md GLOBAL
+    # slot-partition (security.md IS a baseline rule). NOT Shard 6
+    # (testing.md): that rule is priority:10 path-scoped, NOT in the
+    # 9-rule baseline — measured 0B aggregate delta (Shard 6 is
+    # correctness-only: restores 7 dropped universal MUSTs to rs). See
+    # journal/0109 (corrects the journal/0108 Shard-6 mis-attribution).
+    rs: null
     rb: null
     prism: variants/prism/rules/agents.md
     base: variants/base/rules/agents.md
@@ -1577,6 +1739,37 @@ obsoleted:
 # they differ, the agent rewrites the target's settings.json to point at
 # the canonical .claude/hooks/*.js paths (canonical since v2.9.1).
 
+# ─────────────────────────────────────────────────────────────────
+# CONSUMER-SIDE GITIGNORE ADDITIONS — F14 multi-operator-coc (Shard F-3)
+# ─────────────────────────────────────────────────────────────────
+# Paths every USE-template-derived consumer repo MUST gitignore. These
+# are per-clone identity / cache / lease artifacts that MUST NOT enter
+# the consumer's git history. /sync emits these lines into the consumer's
+# `.gitignore` on every cycle (additive — emit MUST NOT remove pre-existing
+# operator-managed .gitignore lines).
+#
+# Distinct from `exclude:` (which controls what loom emits to a consumer);
+# `gitignore_additions:` controls what the consumer's own git tracks.
+# A path can be both excluded from loom sync AND added to the consumer's
+# .gitignore — the two operations are orthogonal.
+#
+# F14 M0–M7 inventory (post journal/0132 convergence):
+gitignore_additions:
+  # Per-clone identity-resolution cache (M0 A1 spec — NON-load-bearing;
+  # rebuilds from coordination log if deleted). MUST NOT be committed —
+  # operator identity stamping derives from the coordination log alone;
+  # caching it in-repo would create a forgeable side-channel.
+  - .claude/operator-id
+  # Fold-speed optimization cache (M0 A0b-2c — append-only fold projection).
+  # Per-clone; regenerable from coordination log; commit-time inclusion
+  # would create per-clone churn with zero shared-value.
+  - .coc-fetch-cache
+  # Codify lease state (M7 codify-lease.js — single-writer lock for
+  # /codify). Atomic .tmp+rename writes; MUST NOT be committed — the
+  # lease IS the runtime-only signal of "an operator holds the codify
+  # lock"; persisting it across clones would make the lease forgeable.
+  - .claude/learning/codify-lease.json
+
 exclude:
   - learning/**
   - .coc-sync-marker
@@ -1601,6 +1794,7 @@ exclude:
   - projects/**                  # Claude Code's per-user session/state cache; loom-local. Pair: `obsoleted: .claude/projects/`.
   - scheduled_tasks.lock         # Claude Code's per-user scheduled-task lock; loom-local. Pair: `obsoleted: .claude/scheduled_tasks.lock`.
   - test-harness/**              # loom's multi-CLI parity test fixtures + result logs; consumers do not run the harness. Pair: `obsoleted: .claude/test-harness/`.
+  - worktrees/**                 # operator-local agent worktrees (worktree-isolation.md primitive). Transient scratch space; never synced. Pair: scanner isNeverSynced + .gitignore — three-layer defense-in-depth per journal/0142.
 
 # ─────────────────────────────────────────────────────────────────
 # BUILD-EXCLUDE (USE templates only — never synced to BUILD repos)
