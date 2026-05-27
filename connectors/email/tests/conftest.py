@@ -21,10 +21,12 @@ except ImportError:  # pragma: no cover - dotenv optional
     pass
 
 
-# Mailpit local-dev defaults. Integration tests use these unless the
-# environment overrides them.
+# Local-dev defaults. The canonical reachability gates + coordinates live in
+# tests/integration/_mailpit.py; these are convenience constants. Mailpit backs
+# the outbound SMTP send (:1025); GreenMail backs the inbound IMAP round-trip
+# (:3143) since Mailpit v1.30.0 ships no IMAP server (journal 0007).
 MAILPIT_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "1025"))
-MAILPIT_IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "1143"))
+GREENMAIL_IMAP_PORT = int(os.environ.get("EMAIL_GREENMAIL_IMAP_PORT", "3143"))
 MAILPIT_HOST = os.environ.get("EMAIL_SMTP_HOST", "localhost")
 
 

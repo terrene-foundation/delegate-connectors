@@ -1,8 +1,10 @@
 # Spec — Test Infrastructure
 
 3-tier testing (`rules/testing.md`). Tier 2/3 use REAL infrastructure — no mocks at
-the boundary. Reality is lighter than the brief feared: **one container, no
-Postgres, no PACT**.
+the boundary. **No Postgres, no PACT.** Two mail containers: Mailpit for the
+outbound SMTP-arrival assertion (real SMTP + a REST search API) and GreenMail
+for the inbound IMAP round-trip (real SMTP **and** real IMAP — Mailpit v1.30.0
+ships no IMAP server).
 
 ## Tier 1 (unit)
 
@@ -12,11 +14,12 @@ resolution, envelope tightening, payload shaping, unknown-sender → `Reject`.
 
 ## Tier 2/3 (integration / e2e) — real infra
 
-| Dependency         | Provision                                                                 | Why                                                                          |
-| ------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| SMTP + IMAP server | **Mailpit** (single Docker container; exposes BOTH SMTP send + IMAP read) | Real send/fetch round-trip. MailHog lacks IMAP; GreenMail is a JVM fallback. |
-| Audit chain        | **In-memory** `AuditChainEngine(chain)`                                   | Shipped runtime audit is in-memory. NO Postgres container.                   |
-| Trust verify       | `Ed25519Verifier(PrincipalDirectory(...))`                                | Real signature verification (NOT `NullVerifier`).                            |
+| Dependency       | Provision                                                            | Why                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| SMTP send + REST | **Mailpit** (SMTP :1025, REST/UI :8025)                              | Outbound send + REST arrival assertion. Mailpit v1.30.0 ships **no** IMAP server (journal 0007), so it cannot back inbound fetch.    |
+| SMTP + IMAP      | **GreenMail** (`greenmail/standalone`; real SMTP :3025 + IMAP :3143) | Inbound round-trip: send via GreenMail SMTP, fetch back via GreenMail IMAP through the connector's `read` path. One JVM, both ports. |
+| Audit chain      | **In-memory** `AuditChainEngine(chain)`                              | Shipped runtime audit is in-memory. NO Postgres container.                                                                           |
+| Trust verify     | `Ed25519Verifier(PrincipalDirectory(...))`                           | Real signature verification (NOT `NullVerifier`).                                                                                    |
 
 No PACT engine container. No Postgres container. (#1035's "real PACT + real
 Postgres" is over-specified vs the shipped runtime — see `conformance.md` and
@@ -24,12 +27,20 @@ Postgres" is over-specified vs the shipped runtime — see `conformance.md` and
 
 ## Topology
 
-- `docker-compose.yml` (new): one `mailpit` service (SMTP :1025, IMAP :1143, UI :8025).
-- `conftest.py` (new at connector package root): session-scoped fixture that
-  starts/waits-for Mailpit, yields SMTP/IMAP coordinates, tears down.
+- `docker-compose.yml`: two services — `mailpit` (SMTP :1025, REST/UI :8025) and
+  `greenmail` (`greenmail/standalone`; SMTP :3025, IMAP :3143, bound 0.0.0.0,
+  `auth.disabled`).
+- Reachability gates in `tests/integration/_mailpit.py`: `requires_mailpit_smtp`
+  (Mailpit SMTP + REST) and `requires_greenmail` (GreenMail SMTP + IMAP). Tests
+  skip with a "cannot execute" reason when the container is not reachable.
+- Inbound round-trip: send via GreenMail SMTP to `bob@example.com` → the IMAP
+  transport logs in AS `bob` (mailbox auto-created on first login under
+  `auth.disabled`) → fetch back through the connector's `read` path → assert a
+  verifiable, identity-bound `AttestedReadReceipt`.
 - e2e: compose a `DelegateRuntime` with the `EmailConnector` → `runtime.execute(...)`
-  triggers an SMTP send to Mailpit → assert the message arrives via IMAP fetch →
-  assert `RuntimeExecutionResult` carries a verifiable `SignedActionEnvelope`.
+  triggers an SMTP send to Mailpit → assert `RuntimeExecutionResult` carries a
+  verifiable `SignedActionEnvelope`. (The end-to-end `runtime.execute()` is xfail
+  gated on an SDK audit-emit fix — journal 0005.)
 
 ## Receipt agreement (cross-impl)
 

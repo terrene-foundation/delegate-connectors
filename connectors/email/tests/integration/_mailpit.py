@@ -2,11 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real-infra reachability gates for the integration tier.
 
-Tier-2/3 use REAL infrastructure (a running Mailpit container) — no mocks at
-the boundary. Tests skip with a CLEAR reason when the infra is not reachable
-(`test-skip-discipline`: "cannot execute", not a masked failure). Mailpit
-v1.30.0 ships no IMAP server (journal 0007), so the IMAP-dependent gate skips
-honestly rather than failing on a missing server.
+Tier-2/3 use REAL infrastructure — no mocks at the boundary. Tests skip with a
+CLEAR reason when the infra is not reachable (`test-skip-discipline`: "cannot
+execute", not a masked failure).
+
+Two services back the tier (see ``docker-compose.yml``):
+
+- **Mailpit** — real SMTP + a REST search API. Backs the SMTP-arrival assertion
+  and the e2e composition test. Mailpit v1.30.0 ships NO IMAP server
+  (workspaces/email/journal/0007), so it cannot back the inbound round-trip.
+- **GreenMail** — real SMTP (3025) AND real IMAP (3143) in one JVM. Backs the
+  inbound IMAP round-trip: send via GreenMail SMTP, fetch back via GreenMail
+  IMAP through the connector's ``read`` path.
 """
 
 from __future__ import annotations
@@ -19,10 +26,19 @@ import urllib.request
 
 import pytest
 
+# --- Mailpit (SMTP + REST) ---
 MAILPIT_HOST = os.environ.get("EMAIL_SMTP_HOST", "localhost")
 SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "1025"))
-IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "1143"))
 API_BASE = os.environ.get("MAILPIT_API_BASE", "http://localhost:8025")
+
+# --- GreenMail (real SMTP + real IMAP) ---
+GREENMAIL_HOST = os.environ.get("EMAIL_GREENMAIL_HOST", "localhost")
+GREENMAIL_SMTP_PORT = int(os.environ.get("EMAIL_GREENMAIL_SMTP_PORT", "3025"))
+GREENMAIL_IMAP_PORT = int(os.environ.get("EMAIL_GREENMAIL_IMAP_PORT", "3143"))
+
+# Back-compat alias: the inbound round-trip historically read IMAP_PORT; it now
+# points at GreenMail's IMAP port.
+IMAP_PORT = GREENMAIL_IMAP_PORT
 
 
 def _tcp_open(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -68,7 +84,8 @@ def _imap_greets(host: str, port: int, timeout: float = 3.0) -> bool:
 
 MAILPIT_SMTP_REACHABLE = _tcp_open(MAILPIT_HOST, SMTP_PORT)
 MAILPIT_API_REACHABLE = _http_ok(f"{API_BASE}/api/v1/info")
-IMAP_SERVER_AVAILABLE = _imap_greets(MAILPIT_HOST, IMAP_PORT)
+GREENMAIL_SMTP_REACHABLE = _tcp_open(GREENMAIL_HOST, GREENMAIL_SMTP_PORT)
+IMAP_SERVER_AVAILABLE = _imap_greets(GREENMAIL_HOST, GREENMAIL_IMAP_PORT)
 
 requires_mailpit_smtp = pytest.mark.skipif(
     not (MAILPIT_SMTP_REACHABLE and MAILPIT_API_REACHABLE),
@@ -77,11 +94,16 @@ requires_mailpit_smtp = pytest.mark.skipif(
         "`docker compose -f connectors/email/docker-compose.yml up -d`."
     ),
 )
-requires_imap_server = pytest.mark.skipif(
-    not IMAP_SERVER_AVAILABLE,
+requires_greenmail = pytest.mark.skipif(
+    not (GREENMAIL_SMTP_REACHABLE and IMAP_SERVER_AVAILABLE),
     reason=(
-        "cannot execute: no IMAP server answering on the IMAP port. Mailpit "
-        "v1.30.0 ships no IMAP server (see workspaces/email/journal/0007-GAP-*); "
-        "provision a real IMAP server (e.g. GreenMail) to run this test."
+        "cannot execute: GreenMail SMTP+IMAP not reachable. Mailpit v1.30.0 "
+        "ships no IMAP server (workspaces/email/journal/0007-GAP-*), so the "
+        "inbound round-trip runs against GreenMail (greenmail/standalone, real "
+        "SMTP 3025 + real IMAP 3143). Start it with "
+        "`docker compose -f connectors/email/docker-compose.yml up -d`."
     ),
 )
+
+# Back-compat alias retained for any importer of the old name.
+requires_imap_server = requires_greenmail

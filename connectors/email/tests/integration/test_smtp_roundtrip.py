@@ -1,12 +1,15 @@
 # Copyright 2026 Terrene Foundation
 # SPDX-License-Identifier: Apache-2.0
-"""Tier-2/3 integration: real SMTP send through the connector against Mailpit.
+"""Tier-2/3 integration: real SMTP send + real IMAP fetch through the connector.
 
-NO mocks at the boundary — the send transits a real SMTP server. Arrival is
-confirmed via Mailpit's REST API (the message genuinely landed), and the
-connector's `write` path produces a receipt that verifies under the real
-Ed25519Verifier. The connector's IMAP fetch path is covered by a sibling test
-that skips when no IMAP server is available (Mailpit ships none — journal 0007).
+NO mocks at the boundary. Two real servers (see ``docker-compose.yml``):
+
+- **Mailpit** — the outbound send transits a real SMTP server; arrival is
+  confirmed via Mailpit's REST API, and the connector's `write` path produces a
+  receipt that verifies under the real Ed25519Verifier.
+- **GreenMail** — backs the inbound round-trip: send via GreenMail SMTP, then
+  fetch the delivered message back via GreenMail IMAP through the connector's
+  `read` path (Mailpit v1.30.0 ships no IMAP server — journal 0007).
 """
 
 from __future__ import annotations
@@ -19,14 +22,18 @@ import uuid
 import pytest
 
 from delegate_connectors.email.compose import build_email_runtime
+from delegate_connectors.email.connector import verify_read_receipt
 from delegate_connectors.email.imap import ImapConfig, ImapTransport
 from delegate_connectors.email.smtp import OutboundMessage, SmtpConfig, SmtpTransport
 
 from _mailpit import (
+    GREENMAIL_HOST,
+    GREENMAIL_IMAP_PORT,
+    GREENMAIL_SMTP_PORT,
     IMAP_PORT,
     MAILPIT_HOST,
     SMTP_PORT,
-    requires_imap_server,
+    requires_greenmail,
     requires_mailpit_smtp,
 )
 
@@ -88,18 +95,29 @@ async def test_connector_write_sends_real_message_arriving_in_mailpit(mailpit_ap
     )
 
 
-@requires_imap_server
-async def test_connector_read_round_trips_via_imap(mailpit_api_base):
-    """Send via SMTP, then fetch it back via the connector's IMAP read path.
+@requires_greenmail
+async def test_connector_read_round_trips_via_imap():
+    """Send via GreenMail SMTP, then fetch it back via the connector's IMAP read.
 
-    Skips when no IMAP server is reachable (Mailpit v1.30.0 ships none —
-    journal 0007). When a real IMAP server IS available this asserts the full
-    inbound round-trip + a verifiable AttestedReadReceipt.
+    Runs against GreenMail (real SMTP 3025 + real IMAP 3143) — Mailpit v1.30.0
+    ships no IMAP server (journal 0007). The send delivers to bob@example.com;
+    the IMAP transport logs in AS bob (GreenMail auto-creates the mailbox on
+    first login under auth.disabled) and SELECTs the INBOX. Asserts the full
+    inbound round-trip + a verifiable, identity-bound AttestedReadReceipt.
     """
     import asyncio
 
-    smtp = SmtpTransport(SmtpConfig(host=MAILPIT_HOST, port=SMTP_PORT))
-    imap = ImapTransport(ImapConfig(host=MAILPIT_HOST, port=IMAP_PORT))
+    recipient = "bob@example.com"
+    smtp = SmtpTransport(SmtpConfig(host=GREENMAIL_HOST, port=GREENMAIL_SMTP_PORT))
+    # Log in to IMAP as the recipient so SELECT INBOX resolves bob's mailbox.
+    imap = ImapTransport(
+        ImapConfig(
+            host=GREENMAIL_HOST,
+            port=GREENMAIL_IMAP_PORT,
+            username=recipient,
+            password="greenmail-any",  # auth.disabled: any password accepted
+        )
+    )
     composed = build_email_runtime(
         smtp=smtp, imap=imap, sender_email="alice@example.com"
     )
@@ -107,7 +125,7 @@ async def test_connector_read_round_trips_via_imap(mailpit_api_base):
     await smtp.send(
         OutboundMessage(
             sender="alice@example.com",
-            recipient="bob@example.com",
+            recipient=recipient,
             subject=subject,
             body="inbound round-trip body",
         )
@@ -131,8 +149,16 @@ async def test_connector_read_round_trips_via_imap(mailpit_api_base):
     assert messages[0].from_addr == "alice@example.com"
     assert messages[0].subject == subject
     assert receipt.attestation and receipt.canonical_bytes
+    # Raw signature verifies under the real Ed25519Verifier ...
     assert composed.verifier.verify(
         receipt.canonical_bytes,
         receipt.attestation,
         str(composed.identity.delegate_id),
     )
+    # ... and the full identity-bound receipt (L2 fix) verifies: the manifest
+    # re-derived from the fetched messages matches the signed canonical bytes.
+    manifest = {
+        "count": len(messages),
+        "message_ids": [m.message_id for m in messages],
+    }
+    assert verify_read_receipt(receipt, manifest, composed.verifier) is True

@@ -47,7 +47,7 @@ pip install -e "connectors/email[test]"
 python -m pytest connectors/email/tests/unit -q
 ```
 
-Tier-2/3 (real infra — Mailpit, no mocks at the boundary):
+Tier-2/3 (real infra — Mailpit + GreenMail, no mocks at the boundary):
 
 ```bash
 docker compose -f connectors/email/docker-compose.yml up -d
@@ -55,9 +55,11 @@ python -m pytest connectors/email/tests/integration -q
 docker compose -f connectors/email/docker-compose.yml down
 ```
 
-Mailpit exposes both SMTP (`:1025`) and IMAP (`:1143`) in one container, plus a
-web UI at `:8025`. If Docker is unavailable the integration tests skip with a
-clear reason (they do not fake the boundary).
+Two real mail servers back the tier: **Mailpit** (SMTP `:1025` + REST/UI `:8025`)
+for the outbound send + arrival assertion, and **GreenMail** (`greenmail/standalone`;
+real SMTP `:3025` + real IMAP `:3143`) for the inbound IMAP round-trip — Mailpit
+v1.30.0 ships no IMAP server. If Docker is unavailable the integration tests skip
+with a clear reason (they do not fake the boundary).
 
 ## Known limitation — runtime `execute()` audit gate
 
