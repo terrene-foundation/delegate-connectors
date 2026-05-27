@@ -79,11 +79,19 @@ class ResolutionOutcome:
 
 
 class EmailPrincipalResolver:
-    """Exact-match resolver of normalized email address → ``Principal`` (v0).
+    """Dual-keyed resolver of email-or-dispatch-id → ``Principal`` (v0).
 
     Construct with a mapping of address → :class:`Principal`. Addresses are
-    normalized on construction so lookups are symmetric with incoming
-    addresses (both pass through :func:`normalize_address`).
+    normalized on construction so :meth:`resolve` lookups are symmetric with
+    incoming addresses (both pass through :func:`normalize_address`).
+
+    The resolver is ALSO keyed by each principal's ``delegate_id`` so
+    :meth:`resolve_delegate_id` can resolve a dispatch identity directly. This
+    is required because the shipped ``DelegateIdentity`` validates its ref
+    fields against ``^[a-zA-Z0-9_-]+$`` and therefore cannot carry an email
+    address — ``authenticate`` resolves by ``delegate_id`` while the literal
+    email lives on the message payload (see
+    ``workspaces/email/journal/0006-DISCOVERY-*``).
     """
 
     def __init__(self, principals_by_address: dict[str, Principal]) -> None:
@@ -92,15 +100,18 @@ class EmailPrincipalResolver:
                 "EmailPrincipalResolver requires a dict[str, Principal]; got "
                 f"{type(principals_by_address).__name__}"
             )
-        normalized: dict[str, Principal] = {}
+        by_address: dict[str, Principal] = {}
+        by_delegate_id: dict[str, Principal] = {}
         for addr, principal in principals_by_address.items():
             if not isinstance(principal, Principal):
                 raise TypeError(
                     f"value for {addr!r} MUST be a Principal; got "
                     f"{type(principal).__name__}"
                 )
-            normalized[normalize_address(addr)] = principal
-        self._by_address = normalized
+            by_address[normalize_address(addr)] = principal
+            by_delegate_id[str(principal.delegate_id)] = principal
+        self._by_address = by_address
+        self._by_delegate_id = by_delegate_id
 
     def resolve(self, address: str) -> ResolutionOutcome:
         """Resolve a (possibly display-named) address to a Principal-or-Reject.
@@ -111,6 +122,18 @@ class EmailPrincipalResolver:
         """
         normalized = normalize_address(address)
         principal = self._by_address.get(normalized)
+        if principal is None:
+            return ResolutionOutcome(None, UnknownSenderDisposition.REJECT)
+        return ResolutionOutcome(principal, UnknownSenderDisposition.ACCEPT)
+
+    def resolve_delegate_id(self, delegate_id: str) -> ResolutionOutcome:
+        """Resolve a dispatch identity's ``delegate_id`` to a Principal-or-Reject.
+
+        Known delegate_id → ``ACCEPT`` + Principal. Unknown → ``REJECT``
+        (fail-closed). Used by ``EmailConnector.authenticate`` because the
+        dispatch identity cannot carry the email on its ref fields.
+        """
+        principal = self._by_delegate_id.get(str(delegate_id))
         if principal is None:
             return ResolutionOutcome(None, UnknownSenderDisposition.REJECT)
         return ResolutionOutcome(principal, UnknownSenderDisposition.ACCEPT)
