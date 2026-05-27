@@ -58,6 +58,11 @@ class HeaderInjectionError(ValueError):
 # in header-bound fields, plus leading/trailing whitespace which can fold
 # headers or be stripped inconsistently by relays.
 _FORBIDDEN_HEADER_CHARS = frozenset("\r\n\x00")
+# Unicode separators some folders / serializers may treat as line breaks:
+# NEL (U+0085), LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029).
+# Python's BytesGenerator does not fold on these, but rejecting them is
+# defense-in-depth that future-proofs against a serializer change.
+_FORBIDDEN_UNICODE_LINE_SEPARATORS = frozenset("\x85  ")
 
 
 def validate_header_field(field_name: str, value: str) -> str:
@@ -88,6 +93,12 @@ def validate_header_field(field_name: str, value: str) -> str:
             raise HeaderInjectionError(
                 f"header field {field_name!r} contains a forbidden control "
                 f"character (0x{ord(ch):02x}) — header injection rejected"
+            )
+        # Defense-in-depth: Unicode line/paragraph separators (NEL/LS/PS).
+        if ch in _FORBIDDEN_UNICODE_LINE_SEPARATORS:
+            raise HeaderInjectionError(
+                f"header field {field_name!r} contains a Unicode line separator "
+                f"(U+{ord(ch):04X}) — header injection rejected"
             )
     if value != value.strip():
         raise HeaderInjectionError(
