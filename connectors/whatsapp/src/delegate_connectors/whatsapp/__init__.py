@@ -13,6 +13,31 @@ v0 contract in ``workspaces/whatsapp/02-plans/``) for the full design.
 
 __version__ = "0.1.0"
 
+from delegate_connectors.whatsapp.cloud_api import (
+    CloudApiConfigError,
+    MessageValidationError,
+    OutboundMessage,
+    RateLimitedError,
+    SendResult,
+    WhatsAppCloudApi,
+    WhatsAppCloudApiError,
+    WhatsAppCloudConfig,
+)
+from delegate_connectors.whatsapp.compose import (
+    ComposedWhatsAppRuntime,
+    WhatsAppV0Signature,
+    build_whatsapp_runtime,
+)
+from delegate_connectors.whatsapp.connector import (
+    ConnectorAuthenticationError,
+    InMemoryKnowledgeLedger,
+    NeverRevokedChannel,
+    WhatsAppConnector,
+    build_action_signing_bytes,
+    build_read_signing_bytes,
+    verify_action_envelope,
+    verify_read_receipt,
+)
 from delegate_connectors.whatsapp.directory import (
     ResolutionOutcome,
     UnknownSenderDisposition,
@@ -20,6 +45,8 @@ from delegate_connectors.whatsapp.directory import (
 )
 from delegate_connectors.whatsapp.redaction import (
     REDACTION_SENTINEL,
+    RedactionConfig,
+    RedactionConfigError,
     normalize_e164,
     redact_phone,
 )
@@ -42,10 +69,12 @@ from delegate_connectors.whatsapp.webhook import (
 
 __all__ = [
     "__version__",
-    # redaction (todo 02)
+    # redaction (todo 02 + todo 15 startup gate)
     "redact_phone",
     "REDACTION_SENTINEL",
     "normalize_e164",
+    "RedactionConfig",
+    "RedactionConfigError",
     # directory (todo 04)
     "WhatsAppPrincipalResolver",
     "UnknownSenderDisposition",
@@ -64,4 +93,26 @@ __all__ = [
     "WhatsAppRejectError",
     "OutsideServiceWindowError",
     "TemplateNotApprovedError",
+    # Cloud API transport (todo 03)
+    "WhatsAppCloudApi",
+    "WhatsAppCloudConfig",
+    "WhatsAppCloudApiError",
+    "CloudApiConfigError",
+    "RateLimitedError",
+    "OutboundMessage",
+    "MessageValidationError",
+    "SendResult",
+    # Connector core (todo 07)
+    "WhatsAppConnector",
+    "ConnectorAuthenticationError",
+    "InMemoryKnowledgeLedger",
+    "NeverRevokedChannel",
+    "build_action_signing_bytes",
+    "build_read_signing_bytes",
+    "verify_action_envelope",
+    "verify_read_receipt",
+    # Runtime composition (todo 08)
+    "build_whatsapp_runtime",
+    "ComposedWhatsAppRuntime",
+    "WhatsAppV0Signature",
 ]
