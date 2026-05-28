@@ -27,7 +27,7 @@ The README/brief/`#1035` `Delegate.compose(...connectors=..., pact_engine=...)` 
 
 - `DelegateRuntime(*, dispatch_surface, audit_engine, cascade, envelope, identity, signer, posture=L5_DELEGATED)`
 - `DispatchSurface(connector, signature, envelope, identity, *, audit_engine, trust_cascade, role, signer, verifier=None)`
-- Entry: `runtime.execute(input_payload: dict) -> RuntimeExecutionResult` — **sync**, not `run()`, not async.
+- Entry: `runtime.execute(input_payload: dict) -> RuntimeExecutionResult` — **async** (awaitable; `inspect.iscoroutinefunction(DelegateRuntime.execute)` is `True` on kailash 2.26.2), not `run()`. (Corrected 2026-05-27: an earlier draft of this line read "sync"; superseded by `specs/runtime-composition.md` per PR #5 and re-verified against the shipped wheel during the slack/telegram/whatsapp `/analyze`.) `DelegateRuntime` re-exports from `kailash.delegate` (defined in `kailash.delegate.runtime`).
 - `Delegate` is just an alias of `DelegateRuntime`.
 
 ### ADR-3: Audit is in-memory; trust is `Ed25519Verifier`. NO Postgres, NO PACT.
