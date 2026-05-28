@@ -22,6 +22,7 @@ which is the ``window_sink`` callback the webhook ingest calls.
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 
 __all__ = [
@@ -31,11 +32,19 @@ __all__ = [
     "ServiceWindowTracker",
     "TemplateGate",
     "SERVICE_WINDOW_SECONDS",
+    "DEFAULT_MAX_WINDOW_ENTRIES",
 ]
 
 #: The WhatsApp customer-service window: 24 hours from the recipient's last
 #: inbound message.
 SERVICE_WINDOW_SECONDS = 24 * 60 * 60
+
+#: Default upper bound on the per-recipient last-inbound map. Tuned for a single
+#: connector process serving up to ~100k distinct recipients within a rolling
+#: 24h window before FIFO-by-record-time eviction begins (L1 security fix —
+#: bounds the memory growth surface the Cloud API transport (todo 03) would
+#: otherwise expose in production deployments).
+DEFAULT_MAX_WINDOW_ENTRIES = 100_000
 
 
 class WhatsAppRejectError(Exception):
@@ -57,18 +66,53 @@ class TemplateNotApprovedError(WhatsAppRejectError):
 class ServiceWindowTracker:
     """Per-recipient last-inbound tracker for the 24h customer-service window.
 
-    An in-memory map of normalized-E.164 → last-inbound epoch seconds, fed by the
-    verified-inbound path (todo 05). :meth:`is_window_open` reports whether a
-    recipient's window is currently open (last inbound within
-    :data:`SERVICE_WINDOW_SECONDS`).
+    A bounded-LRU map (``collections.OrderedDict``) of normalized-E.164 →
+    last-inbound epoch seconds, fed by the verified-inbound path (todo 05).
+    :meth:`is_window_open` reports whether a recipient's window is currently
+    open (last inbound within :data:`SERVICE_WINDOW_SECONDS`).
+
+    The map is bounded by ``max_entries`` (default
+    :data:`DEFAULT_MAX_WINDOW_ENTRIES`) to cap the memory growth surface the
+    Cloud API transport (todo 03) would expose in production. Eviction is
+    FIFO-by-record-time: when :meth:`record_inbound` would grow the map past
+    the cap, the oldest entry (by most-recent record-time) is removed via
+    ``popitem(last=False)`` until the cap holds. Eviction policy invariants:
+
+    1. ``record_inbound`` NEVER grows ``_last_inbound`` beyond ``max_entries``.
+    2. ``is_window_open`` is a PURE READ — it does NOT mutate ordering. A
+       window-state check is not "activity"; only ``record_inbound`` is.
+    3. Eviction is FIFO-by-record-time: the oldest recorded entry evicts first
+       when full. Re-recording an existing key moves it to the MRU position
+       (so a refreshed key is the LAST to evict, not the first).
 
     Time source is injectable (``now``) so tests are deterministic without
     sleeping; production uses :func:`time.time`.
     """
 
-    def __init__(self, *, now: Callable[[], float] | None = None) -> None:
-        self._last_inbound: dict[str, float] = {}
+    def __init__(
+        self,
+        *,
+        now: Callable[[], float] | None = None,
+        max_entries: int = DEFAULT_MAX_WINDOW_ENTRIES,
+    ) -> None:
+        if not isinstance(max_entries, int) or max_entries <= 0:
+            raise ValueError(
+                f"ServiceWindowTracker.max_entries MUST be a positive int; "
+                f"got {max_entries!r}"
+            )
+        self._last_inbound: OrderedDict[str, float] = OrderedDict()
         self._now = now or time.time
+        self._max_entries = max_entries
+
+    @property
+    def size(self) -> int:
+        """Current number of recipients tracked (for observability + tests)."""
+        return len(self._last_inbound)
+
+    @property
+    def max_entries(self) -> int:
+        """The upper bound this tracker enforces on tracked recipients."""
+        return self._max_entries
 
     def record_inbound(
         self, normalized_e164: str, timestamp: str | float | None = None
@@ -78,6 +122,11 @@ class ServiceWindowTracker:
         ``timestamp`` is the inbound epoch-seconds (WhatsApp sends a string); when
         absent or unparseable, the current time is used. This is the
         ``window_sink`` callback the webhook ingest invokes (todo 05).
+
+        Bounded by ``max_entries``: re-recording an existing key moves it to
+        the MRU position (refresh); recording a new key past the cap evicts
+        the oldest-record-time entry via FIFO ``popitem(last=False)`` until
+        the cap holds again.
         """
         if not normalized_e164:
             return
@@ -89,10 +138,25 @@ class ServiceWindowTracker:
                 recorded = float(timestamp)
             except (TypeError, ValueError):
                 recorded = self._now()
+        # Set + move-to-end gives the MRU semantics: refreshing an existing
+        # recipient pushes its entry to the back of the eviction queue so it
+        # outlives older keys regardless of insertion order.
         self._last_inbound[normalized_e164] = recorded
+        self._last_inbound.move_to_end(normalized_e164)
+        # Evict FIFO-by-record-time until the cap holds. popitem(last=False)
+        # is the LRU eviction primitive on OrderedDict — it removes the entry
+        # at the front (oldest record-time after the move_to_end above).
+        while len(self._last_inbound) > self._max_entries:
+            self._last_inbound.popitem(last=False)
 
     def is_window_open(self, normalized_e164: str) -> bool:
-        """True iff ``normalized_e164`` messaged us within the 24h window."""
+        """True iff ``normalized_e164`` messaged us within the 24h window.
+
+        PURE READ — does NOT mutate ordering. A window-state check is not
+        "activity"; ordering is mutated ONLY by :meth:`record_inbound`. This
+        is invariant 2 in the class docstring and is exercised by the
+        ``is_window_open does NOT alter eviction order`` regression test.
+        """
         last = self._last_inbound.get(normalized_e164)
         if last is None:
             return False

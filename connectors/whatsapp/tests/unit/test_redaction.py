@@ -9,6 +9,8 @@ import pytest
 from delegate_connectors.whatsapp.redaction import (
     PII_HMAC_KEY_ENV,
     REDACTION_SENTINEL,
+    RedactionConfig,
+    RedactionConfigError,
     normalize_e164,
     redact_phone,
 )
@@ -84,3 +86,56 @@ def test_sentinel_is_distinct_from_any_success_token(monkeypatch):
     token = redact_phone("+14155550100")
     assert token != REDACTION_SENTINEL
     assert not REDACTION_SENTINEL.startswith("wa:")
+
+
+# ---- L2 security fix — RedactionConfig.from_env() startup gate (todo 15) -----
+# Two invariants (mirroring the module docstring's DUAL CONTRACT):
+#   1. RedactionConfig.from_env() raises RedactionConfigError when
+#      WHATSAPP_PII_HMAC_KEY is unset OR empty (loud at startup).
+#   2. redact_phone() keeps emitting the sentinel on per-message redaction
+#      failure (runtime robustness preserved across rotation glitches).
+
+
+def test_redaction_config_from_env_raises_when_key_unset(monkeypatch):
+    """Invariant 1: startup gate refuses when the env-var is absent."""
+    monkeypatch.delenv(PII_HMAC_KEY_ENV, raising=False)
+    with pytest.raises(RedactionConfigError) as exc:
+        RedactionConfig.from_env()
+    # Error message names the var so operators can act on it.
+    assert PII_HMAC_KEY_ENV in str(exc.value)
+
+
+def test_redaction_config_from_env_raises_when_key_empty(monkeypatch):
+    """Invariant 1: empty-string env-var is treated as unset."""
+    monkeypatch.setenv(PII_HMAC_KEY_ENV, "")
+    with pytest.raises(RedactionConfigError) as exc:
+        RedactionConfig.from_env()
+    assert PII_HMAC_KEY_ENV in str(exc.value)
+
+
+def test_redaction_config_from_env_succeeds_with_valid_key(monkeypatch):
+    """Invariant 1 positive: a valid key produces a usable config object."""
+    monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key-min-len")
+    config = RedactionConfig.from_env()
+    assert config.hmac_key == "test-redaction-key-min-len"
+
+
+def test_redaction_config_error_subclasses_value_error():
+    """Subclasses ValueError so generic config-load handlers still see it."""
+    assert issubclass(RedactionConfigError, ValueError)
+
+
+def test_redact_phone_runtime_contract_preserved_sentinel_on_unset_key(monkeypatch):
+    """Invariant 2: runtime fail-soft contract holds.
+
+    Even with the startup gate landed, :func:`redact_phone` MUST continue to
+    emit :data:`REDACTION_SENTINEL` when the env-var is unset at call time.
+    This is the dual-contract guarantee: startup is loud, per-message is
+    soft. A regression here would crash the connector on a single rotation
+    glitch instead of degrading to a grep-able sentinel in the audit trail.
+    """
+    monkeypatch.delenv(PII_HMAC_KEY_ENV, raising=False)
+    out = redact_phone("+14155550100")
+    assert out == REDACTION_SENTINEL
+    # And of course the raw number does NOT leak.
+    assert "14155550100" not in out
