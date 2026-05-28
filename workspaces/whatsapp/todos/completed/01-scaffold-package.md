@@ -28,3 +28,29 @@
       coexists with the sibling `delegate_connectors.email`.
 - [ ] `.env.example` lists all seven `WHATSAPP_*` keys; no real values present
       (`grep` clean for token-shaped literals).
+
+## Verification
+
+Completed in /implement Wave 1 (2026-05-28).
+
+- `connectors/whatsapp/pyproject.toml` created — dist `delegate-connector-whatsapp`,
+  hatchling backend, `dependencies = ["kailash>=2.24.0", "httpx>=0.27",
+"cryptography>=42.0"]`, `[test]` extra, wheel target `src/delegate_connectors`,
+  `[tool.hatch.version]` reads `src/delegate_connectors/whatsapp/__init__.py`.
+  License `Apache-2.0`.
+- PEP-420 namespace `src/delegate_connectors/whatsapp/` (no `__init__.py` at the
+  `delegate_connectors` root); `whatsapp/__init__.py` present with
+  `__version__ = "0.1.0"`.
+- `README.md` (Apache-2.0 note, Wave-1 status) and `.env.example` (all seven
+  `WHATSAPP_*` keys, no values) created. No `docker-compose.yml` (WA-ADR-5).
+- SPDX `Apache-2.0` header on every `.py` (verified by scan — 0 missing).
+- Namespace coexistence verified: importing both
+  `delegate_connectors.whatsapp` (0.1.0) and the sibling
+  `delegate_connectors.email` (0.1.0) under one PYTHONPATH succeeds.
+- `.env.example` key count = 7, zero populated values (grep clean).
+
+Note: per-package editable install (`pip install -e .`) was NOT run — the brief
+forbids `pip install` against the shared `.venv`; the orchestrator installs deps.
+Import + namespace coexistence were instead verified via
+`PYTHONPATH=connectors/whatsapp/src:connectors/email/src` (the brief's read-only
+test path), which is the equivalent acceptance check.

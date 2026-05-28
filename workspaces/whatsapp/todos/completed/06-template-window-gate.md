@@ -31,3 +31,30 @@
 - [ ] Unit: un-approved template name → `TemplateNotApprovedError`, no send attempted.
 - [ ] Unit: approved template → passes even with a closed window.
 - [ ] Unit: free-form within an open window (recipient messaged < 24h ago) → passes.
+
+## Verification
+
+Completed in /implement Wave 1 (2026-05-28).
+
+- `src/delegate_connectors/whatsapp/templates.py` created:
+  `TemplateGate.check(recipient, *, template_name)` pre-flight gate raising
+  typed `Reject`s; `OutsideServiceWindowError` + `TemplateNotApprovedError`
+  (both subclass `WhatsAppRejectError`); `ServiceWindowTracker` (in-memory
+  per-recipient last-inbound map fed by todo 05's `window_sink` via
+  `record_inbound`, injectable clock for deterministic tests); allowlist seeded
+  from `WHATSAPP_APPROVED_TEMPLATES` via `from_env_value`.
+- Tier-1 tests `tests/unit/test_templates.py` — 12 tests, all green:
+  - Free-form to a recipient with no open window → `OutsideServiceWindowError`,
+    and the spy transport's `send` was never called (`calls == 0`).
+  - Un-approved template name → `TemplateNotApprovedError`, no send attempted.
+  - Approved template → passes even with a closed window (window-exempt).
+  - Free-form within an open window (inbound < 24h ago) → passes.
+  - Window closes after 24h (deterministic clock); unknown recipient is closed;
+    absent/unparseable timestamps fall back to now without raising.
+  - Window-tracker keys are symmetric with inbound normalization (a `+`-prefixed
+    recipient resolves to a window opened under the bare-digit key).
+- All 4 invariants hold: gate fires pre-flight before any side effect (1);
+  free-form outside window → Reject (2); un-approved template → Reject (3);
+  approved-template send window-exempt (4). The Cloud API POST itself is Wave 2
+  (needs httpx) — the gate raises before any transport call, verified by the
+  spy-transport `calls == 0` assertions.

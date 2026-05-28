@@ -1,0 +1,30 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# One service, real infrastructure (no mock at the boundary):
+#
+#   * botapi — a local Bot API HTTP server (the OSS telegram-bot-api daemon).
+#              Speaks the real Bot API protocol over a real socket + JSON cycle,
+#              so the connector's httpx sendMessage/getUpdates paths exercise the
+#              same request-response shape they hit against api.telegram.org.
+#              Backs the Tier-2/3 outbound-arrival + inbound round-trip tests
+#              (wired in todo 07). TELEGRAM_API_BASE points at this service.
+#
+# TELEGRAM_API_ID / TELEGRAM_API_HASH come from the environment (the local Bot
+# API daemon requires Telegram app credentials to start). They are read from the
+# shell / .env — never hardcoded here (rules/security.md). No Postgres, no PACT
+# (the shipped kailash.delegate runtime audit is in-memory).
+services:
+  botapi:
+    image: aiogram/telegram-bot-api:latest
+    container_name: delegate-telegram-botapi
+    restart: unless-stopped
+    environment:
+      # Telegram app credentials (https://my.telegram.org). Supplied via the
+      # environment; the template .env leaves them blank. The daemon refuses to
+      # start without them — that is the intended fail-closed behavior.
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "true"
+    ports:
+      - "8081:8081" # Bot API HTTP

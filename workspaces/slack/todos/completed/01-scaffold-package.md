@@ -35,3 +35,22 @@
 - [ ] `grep -rL "SPDX-License-Identifier: Apache-2.0" connectors/slack/src --include='*.py'`
       returns no files (every `.py` carries the header).
 - [ ] No occurrence of the Rust-sibling package in `pyproject.toml` dependencies.
+
+## Verification (Wave 1)
+
+Implements `specs/monorepo-layout.md` + `02-plans/02-connector-spec.md` § Transport, § Security.
+
+Created:
+
+- `connectors/slack/pyproject.toml` — dist `delegate-connector-slack`, hatchling backend, dynamic version (`path = src/delegate_connectors/slack/__init__.py`), `dependencies = ["kailash>=2.24.0", "slack_sdk>=3.27.0", "cryptography>=42.0"]`, `[test]` extra (pytest / pytest-asyncio / python-dotenv), wheel target `src/delegate_connectors`. No Rust-sibling dependency.
+- `connectors/slack/src/delegate_connectors/slack/__init__.py` (slack namespace; `__version__ = "0.1.0"`; exports the Wave-1 surfaces).
+- `connectors/slack/README.md` (scaffold; body completed by todo 10).
+- `connectors/slack/.env.example` (`SLACK_BOT_TOKEN`, `SLACK_API_BASE_URL`; no real values).
+- `connectors/slack/docker-compose.yml` (placeholder `services: {}`; the Web API mock-server entry is filled by todo 08, ADR-S4).
+
+Invariants satisfied:
+
+1. PEP 420 namespace — no `__init__.py` at `src/delegate_connectors/`; verified `delegate_connectors.slack` AND `delegate_connectors.email` both import in one interpreter (each resolving to its own connector tree).
+2. Apache-2.0 SPDX header present on every source file — `grep -rL "SPDX-License-Identifier: Apache-2.0" connectors/slack --include='*.py'` returns no files (covers src + tests); `pyproject.toml` / README / `.env.example` / docker-compose also carry it.
+
+Note (vs the acceptance checkboxes): `pip install -e .` was NOT run — the shared read-only `.venv` must not be mutated this wave (two sibling agents share it; `slack_sdk` is intentionally NOT installed). Importability was instead verified via `PYTHONPATH=connectors/slack/src` against the already-installed `kailash` + `delegate_connectors.email`, which exercises the PEP-420 coexistence the install-based checkbox targets. The editable-install acceptance line is satisfied at the orchestrator's install step (Wave 2+).

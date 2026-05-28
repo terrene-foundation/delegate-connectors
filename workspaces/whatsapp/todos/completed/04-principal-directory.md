@@ -30,3 +30,24 @@
 - [ ] Unit: unknown identity → `Reject` (never `Accept`).
 - [ ] Unit: normalization round-trips (a stored E.164 and the same number in an alternate
       surface form resolve to the same key).
+
+## Verification
+
+Completed in /implement Wave 1 (2026-05-28).
+
+- `src/delegate_connectors/whatsapp/directory.py` created:
+  `WhatsAppPrincipalResolver` (dual-keyed by `delegate_id` and normalized E.164,
+  reusing todo 02's `normalize_e164`); `UnknownSenderDisposition` closed enum
+  `{Accept, Reject, EscalateToHuman}`; `ResolutionOutcome` (known → Principal +
+  ACCEPT; unknown → None + REJECT, fail-closed).
+- Tier-1 tests `tests/unit/test_directory.py` — 8 tests, all green:
+  - Known `delegate_id` → `Principal(delegate_id, tenant_id, claims)` + ACCEPT.
+  - Unknown identity (delegate_id and phone) → REJECT, never ACCEPT.
+  - Phone normalization round-trips: a stored `+1 (415) 555-0100` resolves
+    identically from a bare-digit `14155550100` and a `+`-prefixed form.
+  - Un-normalizable phone fails closed to REJECT.
+  - Disposition enum is exactly the closed conformance set.
+  - Non-Principal mapping values raise `TypeError`.
+- All 3 invariants hold: exact-match only, no alias/group (1); unknown → REJECT,
+  fail-closed (2); E.164 normalization symmetric across stored keys and incoming
+  values (3).

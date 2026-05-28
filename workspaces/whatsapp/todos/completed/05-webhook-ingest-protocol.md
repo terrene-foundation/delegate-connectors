@@ -38,3 +38,31 @@
 - [ ] Unit: a valid signed payload parses into an `InboundMessage` with the sender redacted
       (raw number absent from the buffered record).
 - [ ] Unit: the one-shot `read`-drain returns the next buffered message, then empties.
+
+## Verification
+
+Completed in /implement Wave 1 (2026-05-28).
+
+- `src/delegate_connectors/whatsapp/webhook.py` created:
+  `verify_token_challenge` (constant-time `hmac.compare_digest`),
+  `verify_signature` (constant-time HMAC over the RAW body bytes, app secret
+  from `WHATSAPP_APP_SECRET`), `parse_inbound_envelope`
+  (`entry[].changes[].value.messages[]` → `InboundMessage` with the sender
+  PII-redacted via todo 02 before any record is built), and `WebhookIngest`
+  (verify-then-buffer; in-process FIFO buffer; `drain_one` one-shot drain;
+  optional `window_sink` feeding the todo-06 tracker). No running HTTP server
+  (WA-ADR-2, out of v0).
+- Tier-1 tests `tests/unit/test_webhook.py` — 17 tests, all green:
+  - Handshake echoes `hub.challenge` on a matching verify-token; rejects on
+    token mismatch and wrong mode.
+  - Valid signature accepted; tampered body, wrong secret, missing/malformed
+    header all refused.
+  - Valid signed payload buffered; `drain_one` returns it then empties the
+    buffer; buffered record's sender is redacted (raw number absent).
+  - Tampered/missing signature → refused, NOT buffered (buffer stays empty),
+    AND does NOT feed the window sink (never audited).
+  - Verified inbound feeds the window sink with `(normalized_e164, timestamp)`.
+  - Envelope parse extracts text + redacts sender; statuses-only payload → [].
+- All 5 invariants hold: HMAC-failing payload never buffered (1); constant-time
+  compare over raw bytes (2); constant-time verify-token compare (3); sender
+  redacted before buffering (4); verified inbound feeds the window tracker (5).

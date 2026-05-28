@@ -1,0 +1,17 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Tier-2 test infrastructure for the Slack connector.
+#
+# Slack is a hosted SaaS with NO self-hostable real server, so the email
+# connector's "real mail container" model cannot be copied literally. Instead a
+# single Web API mock-server container serves the two methods v0 uses
+# (chat.postMessage record+return-ts, conversations.history replay), talked to by
+# a real AsyncWebClient(base_url=...). The SERVER is the local stub, exactly as
+# Mailpit is a local SMTP server — there is NO mocking at the connector boundary
+# (ADR-S4, workspaces/slack/journal/0003-GAP-*).
+#
+# The concrete service entry (image + seeded response shapes + ports) is filled
+# in by the Tier-2 test shard. This scaffold reserves the file so the layout
+# matches the email connector.
+services: {}
