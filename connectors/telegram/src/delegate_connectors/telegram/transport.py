@@ -451,12 +451,18 @@ class TelegramTransport:
             raise TelegramTransportError(
                 f"sendMessage response missing integer 'message_id'; got {result!r}"
             ) from exc
-        chat = result.get("chat") or {}
-        chat_id = (
-            chat.get("id")
-            if isinstance(chat, dict) and "id" in chat
-            else message.chat_id
-        )
+        # Narrow the API-returned chat.id to int | str (the SendResult contract).
+        # The Bot API echoes back the chat envelope; if the field is missing or a
+        # foreign type, fall back to the request's chat_id (which is invariant-
+        # validated by OutboundMessage.__post_init__ via validate_chat_id).
+        chat = result.get("chat")
+        chat_id: int | str = message.chat_id
+        if isinstance(chat, dict):
+            api_chat_id = chat.get("id")
+            if isinstance(api_chat_id, (int, str)) and not isinstance(
+                api_chat_id, bool
+            ):
+                chat_id = api_chat_id
         logger.info(
             "telegram.sendMessage.ok",
             extra={"chat_id": chat_id, "message_id": message_id},
