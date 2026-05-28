@@ -199,13 +199,28 @@ def test_tampered_payload_does_not_feed_window_sink(monkeypatch):
 def test_parse_envelope_redacts_and_extracts_text(monkeypatch):
     monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
     payload = json.loads(_inbound_payload(text="parsed body").decode())
-    messages = parse_inbound_envelope(payload)
-    assert len(messages) == 1
-    msg = messages[0]
+    parsed = parse_inbound_envelope(payload)
+    assert len(parsed) == 1
+    msg, window_key = parsed[0]
     assert msg.text == "parsed body"
     assert msg.sender_redacted.startswith("wa:")
     assert _RAW_SENDER not in msg.sender_redacted
-    assert msg.sender_e164_normalized == _RAW_SENDER
+    # The bare-digit form is returned ALONGSIDE the message for window-tracking,
+    # NOT embedded in the buffered record (M1 closure).
+    assert window_key == _RAW_SENDER
+    assert not hasattr(msg, "sender_e164_normalized")
+
+
+def test_inbound_message_repr_does_not_leak_raw_digits(monkeypatch):
+    """M1 regression: ``repr(InboundMessage)`` MUST NOT contain the raw E.164."""
+    monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
+    payload = json.loads(_inbound_payload(text="body").decode())
+    parsed = parse_inbound_envelope(payload)
+    msg, _ = parsed[0]
+    rendered = repr(msg)
+    assert (
+        _RAW_SENDER not in rendered
+    ), f"raw E.164 digits leaked into repr(InboundMessage): {rendered!r}"
 
 
 def test_parse_envelope_ignores_statuses_only_payload(monkeypatch):

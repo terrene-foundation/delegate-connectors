@@ -87,13 +87,14 @@ class InboundMessage:
     """A normalized inbound WhatsApp message — pure data, no transport coupling.
 
     The sender is stored ONLY as the PII-redacted token (:attr:`sender_redacted`,
-    a ``wa:<8-hex>`` value); the raw ``wa_id`` is never retained on a buffered
-    record. :attr:`sender_e164_normalized` is the bare-digit form used for window
-    tracking (todo 06) — also derived, never the surface-formatted raw input.
+    a ``wa:<8-hex>`` value); the raw ``wa_id`` is NEVER retained on a buffered
+    record. The bare-digit window-tracking key is computed by the parser and
+    handed directly to ``window_sink`` at ingest-time — it never lands on the
+    dataclass and never enters the in-process buffer (closes the M1 contract
+    gap surfaced by the wave-1 security review).
     """
 
     sender_redacted: str
-    sender_e164_normalized: str
     message_type: str
     text: str
     timestamp: str
@@ -143,15 +144,19 @@ def verify_signature(
     return hmac.compare_digest(provided, expected)
 
 
-def parse_inbound_envelope(payload: dict) -> list[InboundMessage]:
-    """Parse a verified webhook payload into normalized inbound messages.
+def parse_inbound_envelope(payload: dict) -> list[tuple[InboundMessage, str]]:
+    """Parse a verified webhook payload into ``(message, window_key)`` tuples.
 
     Walks ``entry[].changes[].value.messages[]``. The sender ``wa_id`` (or
-    ``from``) is PII-redacted before it enters any returned record. Malformed or
-    statuses-only payloads (no ``messages``) yield an empty list — never an
-    exception that would surface a raw number.
+    ``from``) is PII-redacted before it enters any returned :class:`InboundMessage`.
+    The second tuple element is the bare-digit normalized form used by the
+    window-tracker callback (an empty string when normalization fails) — it is
+    deliberately NOT stored on the message itself, so the in-process buffer
+    carries ONLY the redacted token (closes M1 from the wave-1 security review).
+    Malformed or statuses-only payloads yield an empty list — never an exception
+    that would surface a raw number.
     """
-    messages: list[InboundMessage] = []
+    results: list[tuple[InboundMessage, str]] = []
     for entry in payload.get("entry", []) or []:
         for change in entry.get("changes", []) or []:
             value = change.get("value", {}) or {}
@@ -161,17 +166,16 @@ def parse_inbound_envelope(payload: dict) -> list[InboundMessage]:
                 text = ""
                 if msg_type == "text":
                     text = (msg.get("text") or {}).get("body", "")
-                messages.append(
-                    InboundMessage(
-                        sender_redacted=redact_phone(raw_sender),
-                        sender_e164_normalized=_safe_normalize(raw_sender),
-                        message_type=msg_type,
-                        text=text,
-                        timestamp=str(msg.get("timestamp", "")),
-                        message_id=str(msg.get("id", "")),
-                    )
+                message = InboundMessage(
+                    sender_redacted=redact_phone(raw_sender),
+                    message_type=msg_type,
+                    text=text,
+                    timestamp=str(msg.get("timestamp", "")),
+                    message_id=str(msg.get("id", "")),
                 )
-    return messages
+                window_key = _safe_normalize(raw_sender)
+                results.append((message, window_key))
+    return results
 
 
 def _safe_normalize(raw: str) -> str:
@@ -249,13 +253,15 @@ class WebhookIngest:
         except (UnicodeDecodeError, json.JSONDecodeError):
             logger.warning("whatsapp.webhook.payload_unparseable")
             return 0
-        messages = parse_inbound_envelope(payload)
-        for message in messages:
+        parsed = parse_inbound_envelope(payload)
+        for message, window_key in parsed:
             self._buffer.append(message)
-            if self._window_sink is not None and message.sender_e164_normalized:
-                self._window_sink(message.sender_e164_normalized, message.timestamp)
-        logger.info("whatsapp.webhook.ingest.ok", extra={"count": len(messages)})
-        return len(messages)
+            if self._window_sink is not None and window_key:
+                # window_key is the bare-digit form; passed DIRECTLY to the sink
+                # and NOT stored on the buffered record (M1 contract).
+                self._window_sink(window_key, message.timestamp)
+        logger.info("whatsapp.webhook.ingest.ok", extra={"count": len(parsed)})
+        return len(parsed)
 
     def drain_one(self) -> InboundMessage | None:
         """Pop and return the oldest buffered message, or ``None`` if empty.
