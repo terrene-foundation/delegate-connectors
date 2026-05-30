@@ -158,9 +158,9 @@ never echoes the raw recipient number (only the typed error).
 WhatsApp is webhook-push only; v0 owns the ingest PROTOCOL + an in-process
 buffer, NOT a running TLS-terminated HTTP server (owning the public socket is a
 deploy concern — WA-ADR-2). The ingest is the security boundary that keeps
-unverified payloads out of the audit path (`webhook.py:191-264`):
+unverified payloads out of the audit path (`webhook.py:199` — `WebhookIngest`):
 
-- `verify_signature` (`webhook.py:121-144`) computes the
+- `verify_signature` (`webhook.py:129`) computes the
   `X-Hub-Signature-256` HMAC-SHA256 over the **EXACT raw request bytes**
   received (never a re-serialized form), keyed by `WHATSAPP_APP_SECRET`, and
   compares constant-time via `hmac.compare_digest`. It rejects a missing /
@@ -168,12 +168,12 @@ unverified payloads out of the audit path (`webhook.py:191-264`):
   body (forcing callers to pass raw bytes, not parsed JSON). This is the
   raw-body discipline `rules/nexus-webhook-hmac.md` mandates: re-serialized JSON
   would never match Meta's on-wire bytes.
-- `WebhookIngest.ingest` (`webhook.py:236-264`) verifies the HMAC FIRST; a
+- `WebhookIngest.ingest` (`webhook.py:259`) verifies the HMAC FIRST; a
   payload that fails is REFUSED — returns `0`, nothing is buffered, nothing is
   audited, and the rejection is logged WITHOUT any payload bytes (they are
   unverified and may carry PII). Only after verification is the body
   JSON-parsed and walked.
-- `verify_token_challenge` (`webhook.py:105-118`) echoes `hub.challenge` ONLY on
+- `verify_token_challenge` (`webhook.py:113`) echoes `hub.challenge` ONLY on
   a `subscribe` mode with a `hub.verify_token` matching
   `WHATSAPP_WEBHOOK_VERIFY_TOKEN` under a constant-time compare.
 
@@ -181,14 +181,14 @@ unverified payloads out of the audit path (`webhook.py:191-264`):
 
 Inbound is a one-shot drain of an in-process FIFO buffer fed by the verified-
 webhook path, NOT a running HTTP server. `parse_inbound_envelope`
-(`webhook.py:147-178`) walks `entry[].changes[].value.messages[]` into normalized
+(`webhook.py:155`) walks `entry[].changes[].value.messages[]` into normalized
 `InboundMessage` records. The sender `wa_id` is PII-redacted before it enters any
 buffered record; the bare-digit window-tracking key is computed by the parser and
 handed DIRECTLY to the `window_sink` callback at ingest-time — it never lands on
 the `InboundMessage` dataclass and never enters the buffer (the M1 contract from
 the wave-1 security review). Malformed or statuses-only payloads yield an empty
 list, never an exception that would surface a raw number. `read` calls
-`drain_one` / `drain_all` (`webhook.py:266-279`) — one bounded drain per audited
+`drain_one` / `drain_all` (`webhook.py:297`, `:306`) — one bounded drain per audited
 read receipt.
 
 ## 5. Outbound content validation (WA-ADR-1)
