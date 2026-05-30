@@ -13,6 +13,8 @@ import hashlib
 import hmac
 import json
 
+import pytest
+
 from delegate_connectors.whatsapp.redaction import PII_HMAC_KEY_ENV
 from delegate_connectors.whatsapp.webhook import (
     InboundMessage,
@@ -191,6 +193,39 @@ def test_tampered_payload_does_not_feed_window_sink(monkeypatch):
     body = _inbound_payload()
     ingest.ingest(body, _sign(body + b"x"))  # bad signature
     assert recorded == []  # refused payloads never reach the window tracker
+
+
+# --- ingest: bounded buffer (MED-2 memory-exhaustion guard) -----------------
+
+
+def test_buffer_is_bounded_and_evicts_oldest_with_warning(monkeypatch, caplog):
+    """A flood of verified deliveries MUST NOT grow the buffer without limit.
+
+    With max_buffered=2, ingesting 3 verified messages caps the buffer at 2,
+    evicts the OLDEST (FIFO), and logs a WARN on the eviction — silent loss of
+    a verified inbound is itself a signal the read thunk is not draining.
+    """
+    monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
+    ingest = WebhookIngest(_config(), max_buffered=2)
+    for text in ("m1", "m2", "m3"):
+        body = _inbound_payload(text=text)
+        ingest.ingest(body, _sign(body))
+
+    assert ingest.buffered_count == 2  # capped, did not grow to 3
+    drained = ingest.drain_all()
+    # FIFO eviction: m1 (oldest) was dropped; m2 + m3 remain in order.
+    assert [m.text for m in drained] == ["m2", "m3"]
+    assert any(
+        "whatsapp.webhook.buffer_full" in r.message
+        or getattr(r, "msg", "") == "whatsapp.webhook.buffer_full"
+        for r in caplog.records
+    )
+
+
+def test_buffer_rejects_non_positive_max(monkeypatch):
+    monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
+    with pytest.raises(ValueError, match="max_buffered"):
+        WebhookIngest(_config(), max_buffered=0)
 
 
 # --- envelope parse ---------------------------------------------------------

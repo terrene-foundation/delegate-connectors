@@ -26,7 +26,7 @@ from __future__ import annotations
 import pytest
 
 from delegate_connectors.telegram.connector import verify_read_receipt
-from delegate_connectors.telegram.transport import OutboundMessage
+from delegate_connectors.telegram.transport import OutboundMessage, RateLimitedError
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -186,3 +186,34 @@ async def test_inbound_receipt_tamper_fails_verification(
         "message_ids": [u.message_id for u in updates],
     }
     assert verify_read_receipt(tampered, manifest, composed.verifier) is False
+
+
+async def test_write_raises_and_signs_nothing_when_botapi_rejects(
+    telegram_composed, botapi_double
+):
+    """A Bot API rejection MUST raise OUT of write() — no envelope is signed.
+
+    Drives the connector ``write`` path end-to-end through the real transport
+    against a double forced to return the Bot API 429 ``retry_after`` envelope.
+    The transport raises :class:`RateLimitedError`; the raise propagates out of
+    ``write`` so NO :class:`SignedActionEnvelope` is produced. This is the
+    connector-level expression of the sign-only-on-success invariant the
+    transport-level unit tests assert — closing the Tier-1→Tier-2 gap (the
+    double advertised ``force_status`` but no integration test exercised it).
+    """
+    composed = telegram_composed
+    botapi_double.force_status = 429
+    transport = composed.connector._transport
+
+    async def send_thunk():
+        result = await transport.send(
+            OutboundMessage(chat_id=_RECIPIENT_CHAT_ID, text="rejected send")
+        )
+        return {"message_id": result.message_id, "chat_id": result.chat_id}
+
+    with pytest.raises(RateLimitedError):
+        await composed.connector.write(
+            send_thunk,
+            identity=composed.identity,
+            envelope=composed.dispatch_surface.envelope,
+        )

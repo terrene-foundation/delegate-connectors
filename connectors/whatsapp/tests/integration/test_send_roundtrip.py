@@ -30,6 +30,7 @@ import pytest
 
 from delegate_connectors.whatsapp.cloud_api import (
     OutboundMessage,
+    RateLimitedError,
     WhatsAppCloudApi,
     WhatsAppCloudConfig,
 )
@@ -59,7 +60,9 @@ def _composed(whatsapp_test_env, cloud_api_double):
     )
 
 
-def _signed_inbound(ingest: WebhookIngest, *, sender: str, text: str) -> bytes:
+def _signed_inbound(
+    ingest: WebhookIngest, *, sender: str, text: str
+) -> tuple[bytes, str]:
     """Build a webhook payload signed exactly as Meta would sign the raw body.
 
     Uses the SAME app secret the ingest verifies against (from the env-only
@@ -149,6 +152,35 @@ async def test_send_path_matches_meta_messages_contract_and_carries_wamid(
         envelope.signature,
         str(composed.identity.delegate_id),
     )
+
+
+async def test_write_raises_and_signs_nothing_when_cloud_api_rejects(
+    whatsapp_test_env, cloud_api_double
+):
+    """A Cloud API rejection MUST raise OUT of write() — no envelope is signed.
+
+    Drives the connector ``write`` path end-to-end through the real transport
+    against a double forced to return the Meta 429 envelope. The transport
+    raises :class:`RateLimitedError`; the raise propagates out of ``write`` so
+    NO :class:`SignedActionEnvelope` is produced. Connector-level expression of
+    the sign-only-on-success invariant — closes the Tier-1→Tier-2 gap (the
+    double advertised ``force_status`` but no integration test exercised it).
+    """
+    composed, _ingest, cloud_api = _composed(whatsapp_test_env, cloud_api_double)
+    cloud_api_double.force_status = 429
+
+    message = OutboundMessage(to=_RECIPIENT, text="rejected send")
+
+    async def send_thunk():
+        result = await cloud_api.send(message)
+        return {"wamid": result.wamid, "wa_id": result.wa_id, "to": message.to}
+
+    with pytest.raises(RateLimitedError):
+        await composed.connector.write(
+            send_thunk,
+            identity=composed.identity,
+            envelope=composed.dispatch_surface.envelope,
+        )
 
 
 async def test_inbound_signed_webhook_round_trips_through_read(
