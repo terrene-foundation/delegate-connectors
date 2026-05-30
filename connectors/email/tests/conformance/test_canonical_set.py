@@ -172,3 +172,36 @@ def test_vector_outcome_matches_expected(vector: ConformanceVector) -> None:
         f"per-vector outcome wiring gated on kailash-py#1182 "
         f"(vector={vector.id!r}, expected={vector.expected.value!r})"
     )
+
+
+@pytest.mark.xfail(
+    reason=(
+        "kailash-py#1182 audit-emit signature bug — see specs/conformance.md. "
+        "Deterministic-run receipt agreement cannot be measured while "
+        "runtime.execute() returns phase=='failed' under any real verifier "
+        "(audit-emit signs payload bytes; AuditChainEngine verifies the full "
+        "entry signing bytes — compose.py § KNOWN SDK BLOCKER). When #1182 ships, "
+        "this strict xfail flips to XPASS and the marker MUST be removed + the "
+        "body wired to run the full vector set TWICE through composed runtimes and "
+        "assert_receipts_agree across the two deterministic runs."
+    ),
+    strict=True,
+)
+def test_assert_receipts_agree_across_deterministic_runs() -> None:
+    """Two deterministic runs of the vector set MUST produce agreeing receipts.
+
+    Parity with the slack/telegram/whatsapp conformance suites (this row was
+    previously absent from email — redteam finding F4). ``assert_receipts_agree``
+    compares the audit/dispatch receipts emitted by two independent
+    composed-runtime executions of the same vector set; identical inputs MUST
+    yield byte-identical receipts. Depends on ``runtime.execute()`` producing
+    real receipts (blocked by kailash-py#1182). The strict-xfail is the contract
+    that this flips to a real assertion when the SDK fix lands.
+    """
+    # When #1182 ships, replace this body with the deterministic-run check:
+    #   run_a = [drive(v) for v in _CANONICAL_VECTORS]   # composed runtime A
+    #   run_b = [drive(v) for v in _CANONICAL_VECTORS]   # composed runtime B
+    #   assert_receipts_agree(run_a, run_b)
+    raise AssertionError(
+        "assert_receipts_agree deterministic-run wiring gated on kailash-py#1182"
+    )
