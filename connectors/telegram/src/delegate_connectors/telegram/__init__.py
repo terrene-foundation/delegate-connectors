@@ -8,12 +8,18 @@ long-poll inbound (``read``), authenticated against a dual-keyed principal
 resolver. See the package README + ``specs/`` in the monorepo root for the full
 contract.
 
-This package is built in waves. The pure-logic foundation — principal
-resolution (:mod:`delegate_connectors.telegram.directory`) and message-content
-validation (:mod:`delegate_connectors.telegram.validation`) — ships first. The
-``httpx``-backed Bot API transport, the ``TelegramConnector`` itself, and the
-runtime composition land in later waves; their public symbols are added to
-``__all__`` as each module lands.
+The full surface has shipped: the pure-logic foundation — principal resolution
+(:mod:`delegate_connectors.telegram.directory`) and message-content validation
+(:mod:`delegate_connectors.telegram.validation`) — alongside the ``httpx``-backed
+Bot API transport (:mod:`delegate_connectors.telegram.transport`), the
+``TelegramConnector`` itself (:mod:`delegate_connectors.telegram.connector`), and
+the runtime composition (:mod:`delegate_connectors.telegram.compose`).
+
+``__all__`` re-exports only the pure, always-importable primitives (directory +
+validation) so importing the package root never forces an ``httpx`` import for
+callers that only need the resolver / validators. The ``httpx``-dependent
+modules are imported from their own submodules directly (e.g.
+``from delegate_connectors.telegram.transport import TelegramTransport``).
 """
 
 __version__ = "0.1.0"

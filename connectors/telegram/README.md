@@ -34,19 +34,22 @@ whose proxied `read` / `write` emit empty, unverifiable receipts. There is no
 stale `connect() / identify() / normalize()` surface; those methods do not exist
 in the shipped ABC.
 
-## Build status
+## Components
 
-This connector ships in waves. Landed today:
-
+- **`transport.py`** — the `httpx`-backed Bot API transport (`sendMessage`
+  outbound + `getUpdates` inbound long-poll). A Bot API `429` raises a typed
+  `RateLimitedError` carrying `retry_after`; the caller decides backoff.
+- **`connector.py`** — the `TelegramConnector` itself (the four ABC members + the
+  three trust properties) plus the `verify_action_envelope` /
+  `verify_read_receipt` helpers that re-derive identity-bound signing bytes.
 - **`directory.py`** — the dual-keyed principal resolver + the closed-enum
   `UnknownSenderDisposition` (unknown sender → `Reject`).
 - **`validation.py`** — pure message-content validation (control-character
-  reject, `text` ≤ 4096 UTF-16 code units, `chat_id` shape). No transport
-  dependency; the `httpx`-backed `sendMessage` POST consumes these checks in a
-  later wave.
-
-The `httpx`-backed Bot API transport, the `TelegramConnector` itself, the
-runtime composition, and the Tier-2/3 + conformance suites land in later waves.
+  reject, `text` ≤ 4096 UTF-16 code units, `chat_id` shape), invoked at the
+  `OutboundMessage` construction boundary so every send route is covered.
+- **`compose.py`** — `build_telegram_runtime`, which composes a real
+  `DelegateRuntime` around the connector with the shipped trust / audit /
+  verifier concretes (no mocks).
 
 ## Install
 
@@ -63,17 +66,25 @@ chat, never the URL.
 
 ## Test
 
-Tier-1 (unit, no I/O, no third-party transport lib required):
-
 ```bash
 pip install -e "connectors/telegram[test]"
+# Tier 1 (unit)
 python -m pytest connectors/telegram/tests/unit -q
+# Tier 2/3 (integration — REAL TelegramTransport over a REAL httpx.AsyncClient
+# whose byte stream terminates at an in-process protocol-faithful Bot API
+# double; NO mock at the connector boundary, so these RUN in CI)
+python -m pytest connectors/telegram/tests/integration -q
+# Conformance (canonical conformance vector set)
+python -m pytest connectors/telegram/tests/conformance -q
+# Regression (behavioral security-property guards; NEVER deleted)
+python -m pytest connectors/telegram/tests/regression -q
 ```
 
-Tier-2/3 (real infra — a local Bot API HTTP service, no mocks at the boundary)
-land in a later wave; see `docker-compose.yml` for the service that will back
-them. If Docker is unavailable those tests skip with a clear reason (they do not
-fake the boundary).
+The opt-in Tier-3 live test (`test_live_telegram`) skips with a clear "cannot
+execute" reason unless real `TELEGRAM_*` credentials are present — it never falls
+back to a mock. The end-to-end `runtime.execute()` outcome assertions are
+strict-`xfail` gated on an SDK fix (kailash-py#1182); the connector's own
+read / write receipts verify today.
 
 ## License
 
