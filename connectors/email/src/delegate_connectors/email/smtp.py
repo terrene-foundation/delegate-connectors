@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "SmtpConfig",
     "SmtpConfigError",
+    "SmtpSendError",
     "SmtpTransport",
     "SendResult",
     "OutboundMessage",
@@ -38,6 +39,19 @@ __all__ = [
 
 class SmtpConfigError(ValueError):
     """Raised when required SMTP configuration is absent from the environment."""
+
+
+class SmtpSendError(RuntimeError):
+    """Raised when the SMTP server refused delivery to the recipient.
+
+    ``aiosmtplib.send`` raises only on hard transport failure; per-recipient
+    refusals (e.g. ``550 No such user``) come back in a non-empty ``errors``
+    dict with the call still returning. For this single-recipient connector a
+    non-empty ``errors`` map means the message was delivered to nobody, so the
+    transport MUST raise — the connector under audit aborts BEFORE signing.
+    A signed envelope must only ever attest a delivery that actually occurred.
+    Carries the SMTP refusal codes; never the credentials.
+    """
 
 
 class HeaderInjectionError(ValueError):
@@ -261,18 +275,34 @@ class SmtpTransport:
             use_tls=cfg.use_tls,
             start_tls=cfg.use_tls or None,
         )
-        accepted = not errors
+        if errors:
+            # Single-recipient connector: a non-empty errors map means the one
+            # recipient was refused → the message reached nobody. Abort before
+            # the connector signs. Carry the SMTP codes, never the credentials.
+            codes = ", ".join(str(code) for code, _ in errors.values())
+            logger.warning(
+                "email.smtp.send.refused",
+                extra={
+                    "recipient": message.recipient,
+                    "message_id": message.message_id,
+                    "smtp_codes": codes,
+                },
+            )
+            raise SmtpSendError(
+                f"SMTP server refused delivery to {message.recipient} "
+                f"(codes: {codes}); message delivered to no recipient"
+            )
         logger.info(
             "email.smtp.send.ok",
             extra={
                 "recipient": message.recipient,
                 "message_id": message.message_id,
-                "accepted": accepted,
+                "accepted": True,
             },
         )
         return SendResult(
             message_id=message.message_id,
-            accepted=accepted,
+            accepted=True,
             recipient=message.recipient,
             server_response=str(response),
         )
