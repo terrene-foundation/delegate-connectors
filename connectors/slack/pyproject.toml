@@ -21,6 +21,12 @@ dependencies = [
     # (messages.py / directory.py) but declared because the connector + transport
     # (later shards) compose AsyncWebClient directly.
     "slack_sdk>=3.27.0",
+    # slack_sdk's AsyncWebClient (the real chat.postMessage / conversations.history
+    # transport) requires aiohttp, which slack_sdk only pulls via its [optional]
+    # extra — declared explicitly here because the connector composes AsyncWebClient
+    # on the production path AND the Tier-2 in-process double imports aiohttp.web
+    # directly (declared = imported).
+    "aiohttp>=3.7.3",
     # Ed25519Verifier requires the cryptography lib (kailash [trust] extra ships
     # it; declared here because this connector composes a real Ed25519Verifier
     # directly, mirroring the email connector).
