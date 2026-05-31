@@ -3,13 +3,20 @@
 """Tier-1 unit tests for runtime composition (compose.py).
 
 These prove compose BUILDS a valid, reusable DelegateRuntime with the real
-shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion is
-gated on an SDK fix (kailash-py#1182) and is marked xfail with a precise reason
-— NOT skipped silently and NOT faked.
+shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion
+drives a transport backed by the in-process :class:`_InlineBotApiDouble` — a
+minimal :class:`httpx.MockTransport` that speaks the Bot API
+``POST .../sendMessage`` request/response shape (same pattern as
+``_botapi_double.BotApiDouble`` in the integration tier, inlined here to keep
+the unit tier self-contained and offline).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+
+import httpx
 import pytest
 
 from kailash.delegate import DelegateRuntime, DispatchSurface
@@ -24,9 +31,64 @@ from delegate_connectors.telegram.transport import (
     TelegramTransport,
 )
 
+_FIXED_DATE = 1700000000
+
+
+class _InlineBotApiDouble:
+    """Minimal inline Bot API responder for unit-tier tests.
+
+    Handles ``sendMessage`` only (the only call ``runtime.execute`` makes for
+    the ``telegram-send`` signature). Returns a deterministic Bot-API-shaped
+    success envelope — same shape as :class:`_botapi_double.BotApiDouble` but
+    without the ``getUpdates`` surface (not needed at unit tier).
+    """
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        method_name = request.url.path.rsplit("/", 1)[-1]
+        body: dict = {}
+        if request.content:
+            try:
+                parsed = json.loads(request.content.decode("utf-8"))
+                if isinstance(parsed, dict):
+                    body = parsed
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                body = {}
+        if method_name == "sendMessage":
+            chat_id = body.get("chat_id")
+            text = body.get("text", "")
+            digest = hashlib.sha256(
+                json.dumps(body, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            message_id = int(digest[:8], 16)
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": {
+                        "message_id": message_id,
+                        "chat": {"id": chat_id},
+                        "text": text,
+                        "date": _FIXED_DATE,
+                    },
+                },
+            )
+        return httpx.Response(404, json={"ok": False, "description": "Not Found"})
+
 
 def _transport() -> TelegramTransport:
-    return TelegramTransport(TelegramConfig(bot_token="t", api_base="https://api.x"))
+    """Build a TelegramTransport backed by the inline Bot API double.
+
+    The transport speaks the REAL production code paths; only the HTTP byte
+    stream is terminated in-process by the mock transport — no mock at the
+    connector or transport method level.
+    """
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_InlineBotApiDouble()))
+    return TelegramTransport(
+        TelegramConfig(
+            bot_token="unit-test-token", api_base="https://api.telegram.org"
+        ),
+        client=client,
+    )
 
 
 async def test_build_telegram_runtime_constructs_real_runtime():
@@ -76,24 +138,24 @@ async def test_connector_receipts_verify_under_composed_verifier():
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "SDK bug (kailash.delegate, kailash-py#1182): runtime/dispatch "
-        "audit-emit signs payload bytes but AuditChainEngine verifies the full "
-        "entry signing bytes, so runtime.execute() fails at the first phase "
-        "transition under any real verifier. The connector's own receipts "
-        "verify (test above); this is gated on the SDK fix."
-    ),
-    strict=True,
-)
-async def test_runtime_execute_end_to_end_gated_on_sdk_fix():
+async def test_runtime_execute_end_to_end_completes():
+    """End-to-end ``await runtime.execute(...)`` completes on kailash >= 2.28.0.
+
+    Was strict-xfailed on the kailash-py#1182 audit-emit signature bug (runtime
+    audit-emit signed the event payload bytes while ``AuditChainEngine`` verified
+    the full entry signing bytes, so ``execute()`` failed at the first phase
+    transition under any real verifier). Fixed at <= 2.28.1 (see
+    workspaces/whatsapp/journal/0008); the marker is removed and the assertion
+    now holds.
+
+    The transport is backed by :class:`_InlineBotApiDouble` (an inline
+    ``httpx.MockTransport`` that speaks the Bot API ``sendMessage`` shape) so
+    the run completes end-to-end without a live network connection.
+    """
     composed = build_telegram_runtime(
         transport=_transport(), sender_user_id=123, sender_chat_id=456
     )
     result = await composed.runtime.execute({"chat_id": 456, "text": "hi"})
-    # When the SDK is fixed this assertion will hold and the xfail flips to
-    # XPASS (strict=True turns an unexpected pass into a failure, forcing the
-    # xfail marker to be removed once the SDK ships the fix).
     assert result.taod_state.phase == "completed"
 
 
