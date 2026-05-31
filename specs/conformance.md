@@ -1,18 +1,28 @@
-# Spec — Conformance (PARTIALLY ACTIVE)
+# Spec — Conformance (ACTIVE)
 
-> **STATUS: HALF-ACTIVE (un-deferred 2026-05-27 under cross-repo authz at
-> `workspaces/email/journal/0012`).** The vendored canonical fixture lives at
+> **STATUS: ACTIVE (per-vector outcome assertions live 2026-05-31).** The
+> vendored canonical fixture lives at
 > `tests/fixtures/delegate-conformance/canonical.json` (monorepo root) and a
 > local loader replaces the SDK's broken `ConformanceVectorLoader.load_canonical()`.
-> The half that is **ACTIVE now**: fixture load, well-formedness gate, ABC
-> composition harness — runs as the `conformance` test marker. The half that
-> remains **GATED on kailash-py#1182**: per-vector outcome assertion (drives
-> each vector's `given` through `runtime.execute()` whose audit-signature bug
-> blocks any real verifier — journal/0005). The per-vector tests are
-> strict-xfailed; when #1182 ships they flip to XPASS and force the marker's
-> removal + per-vector scenario wiring.
+> Both halves now run as the `conformance` test marker across all four
+> connectors (slack, telegram, whatsapp, email): (1) fixture load,
+> well-formedness gate, ABC composition harness, AND (2) the per-vector outcome
+> assertion — a connector-agnostic driver (`vector_driver.drive_vector`)
+> materializes each vector's `given` against the shipped `kailash.delegate`
+> spine and asserts the observed `BehaviouralOutcome == expected`, plus an
+> `assert_receipts_agree` deterministic-run row.
 >
-> Original deferral receipt: `journal/0003`. Un-deferral receipt: `journal/0012`.
+> The per-vector half was previously **GATED on kailash-py#1182** (the runtime
+> audit-emit path signed event PAYLOAD bytes while `AuditChainEngine.emit_event`
+> verified the FULL entry signing bytes, so `runtime.execute()` returned
+> `phase=="failed"` under any real verifier — journal/0005). **#1182 is fixed
+> at <= 2.28.1** (`workspaces/whatsapp/journal/0008`); the strict-xfail markers
+> are removed and the per-vector driver drives the real assertions.
+>
+> Historical receipts: original deferral `journal/0003`; un-deferral (Option A
+> vendoring) `journal/0012`; #1182-fixed scope correction
+> `workspaces/whatsapp/journal/0008`; Class E shard plan
+> `workspaces/whatsapp/02-plans/03-f2-shard-plan.md`.
 
 ## Vector contract (verified)
 
@@ -51,34 +61,57 @@ at ref `main` (5 vectors: DV-3/5/7/9/10, 4 Reject + 1 Accept).
 
 Option B (defer) is now closed. Option C (author from spec) is not pursued — the canonical set is authoritative.
 
-## What ships now vs gated on kailash-py#1182
+## What runs (both halves ACTIVE)
 
-**Ships now (concrete, runs today):**
+**Well-formedness (no SDK execute dependency):**
 
 - Vendored canonical set loads and hydrates into typed `ConformanceVector` instances.
 - Shipped `validate_vector_set` accepts the set (well-formedness + id uniqueness).
 - Every `expected` is in the closed enum `{Accept, Reject, EscalateToHuman}`.
-- The `EmailConnector` composes against `DelegateRuntime` without raising.
+- Each connector composes against `DelegateRuntime` without raising.
 
-**Gated on kailash-py#1182 (strict xfail per vector):**
+**Per-vector outcome (ACTIVE on kailash >= 2.28.0):**
 
-- Per-vector outcome assertion — drive each vector's `given` scenario through
-  the composed runtime and assert outcome == `expected`. Blocked because the
-  shipped audit-emit signs payload bytes while `AuditChainEngine` verifies the
-  full entry signing bytes, so `runtime.execute()` returns `phase=="failed"` on
-  any real verifier (journal/0005). When #1182 lands the strict xfails flip to
-  XPASS and force the marker's removal + per-vector scenario wiring.
-- Cross-impl receipt determinism via `assert_receipts_agree` — same dependency.
+- `vector_driver.drive_vector(vector, make_composed)` materializes each vector's
+  `given` against the shipped `kailash.delegate` primitives and returns the
+  observed `BehaviouralOutcome`; the test asserts `observed == expected`.
+- `vector_driver.drive_two_deterministic_runs(make_composed)` returns two
+  independent `RuntimeExecutionResult` receipt trees; the test asserts
+  `assert_receipts_agree` with `exclude_fields = {run_id, at, dispatch_id,
+audit_head_hash, audit_chain_entries}` (the same set as the Tier-2 e2e
+  determinism test).
 
-## When #1182 lands — un-xfail checklist
+The driver is **connector-agnostic** — the vectors exercise the delegate spine,
+not connector code; the driver is copied per-connector (mirroring `loader.py`),
+and only the `make_composed` thunk differs.
 
-1. For each vector (DV-3-001, DV-5-001, DV-7-001, DV-9-001, DV-10-001), author
-   the per-vector scenario setup that materializes the `given` clause:
-   - DV-3-001 §3 (Reject) — Genesis Record + cascade grant widening Financial dim.
-   - DV-5-001 §5 (Reject) — composition-level invariant on §5 of the Delegate Spec.
-   - DV-7-001 §7 (Reject) — composition-level invariant on §7.
-   - DV-9-001 §9 (Accept) — the single Accept case; well-formed composition.
-   - DV-10-001 §10 (Reject) — composition-level invariant on §10.
-2. Remove the strict-`xfail` marker on `test_vector_outcome_matches_expected`.
-3. Replace the stub body with the per-vector driver: compose a runtime, materialize the `given`, await `runtime.execute()`, map the result to `BehaviouralOutcome`, assert `==` expected.
-4. Add `assert_receipts_agree` deterministic-run assertion.
+## Per-vector materialization (primitive → outcome map)
+
+| Vector    | §   | Expected | Materialization (shipped `kailash.delegate` primitive)                                                                                                                      |
+| --------- | --- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DV-3-001  | 3   | Reject   | `TenantScopedCascade.cascade_child` with a child envelope widening the parent's Financial dim → `EnvelopeWideningError` (Step 3 F5 tightening).                             |
+| DV-5-001  | 5   | Reject   | `DelegateConstraintEnvelope.tighten_with` a wider Financial dim → `EnvelopeWideningError`.                                                                                  |
+| DV-7-001  | 7   | Reject   | second `runtime.execute()` on a terminal runtime → `RuntimePhaseError` (single-shot TAOD phase monotonicity).                                                               |
+| DV-9-001  | 9   | Accept   | `AuditChainEngine` head hash; replay reconstructed from each entry's `to_canonical_dict()` recomputes the SAME head hash.                                                   |
+| DV-10-001 | 10  | Reject   | a `principal_kind="sovereign"` identity bound to a service-account-only connector role → `DispatchEnvelopeViolationError` (§10 G1 sovereign-vs-service-account separation). |
+
+Reject is observed when the path raises one of the spine's documented violation
+errors (`EnvelopeWideningError`, `CascadeScopeExpansionError`,
+`CascadeTenantViolationError`, `DispatchCascadeViolationError`,
+`DispatchEnvelopeViolationError`, `R2CompositionError`, `RuntimePhaseError`,
+`RuntimeCompositionError`, `RuntimePostureBlockedError`) OR `runtime.execute()`
+returns `phase == "failed"`.
+
+## Un-xfailed (history)
+
+The per-vector half was strict-xfail-gated on kailash-py#1182. #1182 is fixed at
+<= 2.28.1 (`workspaces/whatsapp/journal/0008`); the markers were removed and the
+per-vector driver wired across all four connectors (F2 Class E, 2026-05-31):
+`test_vector_outcome_matches_expected` (5 vectors) +
+`test_assert_receipts_agree_across_deterministic_runs`, 8 markers removed
+(2 per connector × 4). DV-7/DV-9 against transports with no live Accept-path
+(telegram real-API, whatsapp closed service window, email absent SMTP server)
+still produce the correct outcome: DV-7 Rejects on the terminal-runtime second
+execute, DV-9 Accepts via the pre-dispatch audit entries, and the determinism
+rows agree because both runs terminate identically. The connector Accept-path
+e2e (socket double / Mailpit) is a separate Tier-2 surface.

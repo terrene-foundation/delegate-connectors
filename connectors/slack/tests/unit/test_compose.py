@@ -3,11 +3,10 @@
 """Tier-1 unit tests for runtime composition (compose.py).
 
 These prove compose BUILDS a valid, reusable DelegateRuntime with the real
-shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion is
-gated on an SDK fix (kailash-py#1182 — same SDK failure mode the email connector
-reproduces) and is marked xfail with a precise reason — NOT skipped silently and
-NOT faked. The connector-level signed write envelope verifies under the composed
-verifier as a real pass, not xfail.
+shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion was
+previously gated on kailash-py#1182 (xfail); fixed at kailash <= 2.28.0 — it now
+completes and is asserted as a real pass. The connector-level signed write
+envelope also verifies under the composed verifier.
 """
 
 from __future__ import annotations
@@ -99,24 +98,15 @@ async def test_connector_receipts_verify_under_composed_verifier():
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "SDK bug (kailash.delegate, tracked as kailash-py#1182): runtime/dispatch "
-        "audit-emit signs payload bytes but AuditChainEngine verifies the full "
-        "entry signing bytes, so runtime.execute() fails at the first phase "
-        "transition under any real verifier. See workspaces/email/journal/"
-        "0005-GAP-* for the full reproduction — same SDK failure mode reproduces "
-        "for slack. The connector's own receipts verify (test above); this is "
-        "gated on the SDK fix."
-    ),
-    strict=True,
-)
-async def test_runtime_execute_end_to_end_gated_on_sdk_fix():
-    """End-to-end ``await runtime.execute(...)`` — xfail on kailash-py#1182.
+async def test_runtime_execute_end_to_end_completes():
+    """End-to-end ``await runtime.execute(...)`` completes on kailash >= 2.28.0.
 
-    When the SDK is fixed this assertion will hold and the xfail flips to
-    XPASS (strict=True turns an unexpected pass into a failure, forcing the
-    xfail marker to be removed once the SDK ships the fix).
+    Was strict-xfailed on the kailash-py#1182 audit-emit signature bug (runtime
+    audit-emit signed the event payload bytes while ``AuditChainEngine`` verified
+    the full entry signing bytes, so ``execute()`` failed at the first phase
+    transition under any real verifier). Fixed at <= 2.28.1 (see
+    workspaces/whatsapp/journal/0008); the marker is removed and the assertion
+    now holds.
     """
     composed = build_slack_runtime(
         transport=_transport(), sender_slack_id="U07ABCDE123"

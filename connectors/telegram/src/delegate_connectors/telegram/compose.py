@@ -13,21 +13,14 @@ The runtime is constructed with a real ``Ed25519Verifier`` (NOT ``NullVerifier``
 and a real Ed25519 ``signer``. All constructors succeed and the composition
 passes the runtime's R2-composition gate.
 
-KNOWN SDK BLOCKER — ``runtime.execute()``:
-    The shipped ``kailash.delegate`` runtime/dispatch audit-emit path signs the
-    event PAYLOAD bytes (``DelegateRuntime._emit_phase_audit`` / the
-    ``DispatchSurface.dispatch`` audit loop), but ``AuditChainEngine.emit_event``
-    verifies the signature against the FULL audit-entry signing bytes
-    (``AuditChainEntry.to_signing_bytes()`` — sequence + previous_hash +
-    event_type + event_payload + signer + signed_at). The two byte strings are
-    never equal, so ``emit_event`` raises ``AuditChainSignatureError`` on the
-    first phase transition and ``runtime.execute()`` returns
-    ``taod_state.phase == "failed"`` under ANY real verifier. This is a bug in
-    the SDK runtime (kailash-py#1182), NOT in this connector — the connector's
-    own ``read`` / ``write`` receipts verify correctly (proven in the Tier-1
-    suite). The end-to-end ``execute()`` assertion is gated on the SDK fix;
-    composition (everything this module does up to ``build_telegram_runtime``)
-    is not.
+``runtime.execute()`` — end-to-end (fixed at kailash >= 2.28.0):
+    Previously gated on kailash-py#1182 — the runtime/dispatch audit-emit path
+    signed the event PAYLOAD bytes while ``AuditChainEngine.emit_event`` verified
+    the FULL audit-entry signing bytes, so ``execute()`` returned
+    ``taod_state.phase == "failed"`` under any real verifier at the first phase
+    transition. Fixed at kailash <= 2.28.1 (the connector floor is now
+    ``>=2.28.0``); ``runtime.execute()`` now completes end-to-end. See
+    ``workspaces/whatsapp/journal/0008`` for the fix verification.
 """
 
 from __future__ import annotations

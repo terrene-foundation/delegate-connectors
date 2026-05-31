@@ -225,14 +225,30 @@ class SmtpTransport:
 
     Construct with an explicit config (tests) or via :meth:`from_env`
     (production). The transport holds no global state and is reusable.
+
+    For Tier-1 tests, pass ``_send_fn=<fake>`` to bypass the ``aiosmtplib.send``
+    call entirely. The fake MUST be an async callable with the same signature as
+    ``aiosmtplib.send(message, *, hostname, port, username, password, use_tls,
+    start_tls)`` and MUST return ``(errors: dict, response: str)`` — the same
+    two-tuple that ``aiosmtplib.send`` returns on success. A protocol-faithful
+    deterministic adapter (not a mock) is the correct shape: it satisfies the
+    protocol contract and returns a real success result without network I/O.
     """
 
-    def __init__(self, config: SmtpConfig) -> None:
+    def __init__(
+        self,
+        config: SmtpConfig,
+        *,
+        _send_fn=None,
+    ) -> None:
         if not isinstance(config, SmtpConfig):
             raise TypeError(
                 f"SmtpTransport.config MUST be an SmtpConfig; got {type(config).__name__}"
             )
         self._config = config
+        # Test-injection seam: when provided, replaces aiosmtplib.send. The
+        # callable must be async and return (errors: dict, response: str).
+        self._send_fn = _send_fn
 
     @classmethod
     def from_env(cls) -> "SmtpTransport":
@@ -266,7 +282,8 @@ class SmtpTransport:
         mime = message.to_mime()
         # aiosmtplib.send raises on hard failure; the returned errors dict maps
         # any per-recipient refusals. An empty errors dict means all accepted.
-        errors, response = await aiosmtplib.send(
+        _fn = self._send_fn if self._send_fn is not None else aiosmtplib.send
+        errors, response = await _fn(
             mime,
             hostname=cfg.host,
             port=cfg.port,

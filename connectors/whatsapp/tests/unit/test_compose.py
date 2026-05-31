@@ -5,10 +5,18 @@
 These prove ``build_whatsapp_runtime`` BUILDS a valid, reusable DelegateRuntime
 with the real shipped concretes (no mocks) and that the connector's own receipts
 verify under the composed verifier. The end-to-end ``runtime.execute()``
-assertion is gated on the SDK fix (kailash-py#1182, documented in the compose.py
-module docstring) and is marked strict-xfail with a precise reason — NOT skipped
-silently and NOT faked. Composition itself (up to build_whatsapp_runtime) PASSES;
-only ``execute()`` is xfail.
+assertion now passes at kailash >= 2.28.1 (kailash-py#1182 fixed) and is no
+longer xfailed.
+
+The execute() test pre-warms the service window for the recipient via the
+composed connector's window tracker so a freeform text payload passes the
+pre-flight TemplateGate without requiring an approved-template send (WhatsApp
+only allows freeform text within an open 24h customer-service window; the
+window tracker is injectable, so this is deterministic and requires no real
+WhatsApp infrastructure).
+
+The Cloud API call itself is terminated at the in-process CloudApiDouble so no
+real HTTP request leaves the unit test.
 
 The PII HMAC key is set via ``monkeypatch.setenv`` because the connector's
 ``__init__`` startup gate (invoked inside ``build_whatsapp_runtime``) refuses to
@@ -30,7 +38,7 @@ from delegate_connectors.whatsapp.compose import (
     WhatsAppV0Signature,
     build_whatsapp_runtime,
 )
-from delegate_connectors.whatsapp.redaction import PII_HMAC_KEY_ENV
+from delegate_connectors.whatsapp.redaction import PII_HMAC_KEY_ENV, normalize_e164
 from delegate_connectors.whatsapp.webhook import WebhookConfig, WebhookIngest
 
 pytestmark = pytest.mark.asyncio
@@ -45,10 +53,15 @@ def _pii_key(monkeypatch):
 
 
 def _cloud_api() -> WhatsAppCloudApi:
+    # Inject the in-process double so the execute() test terminates at the
+    # double rather than opening a real HTTPS connection to Meta.
+    from _cloud_api_double import CloudApiDouble
+
     return WhatsAppCloudApi(
         WhatsAppCloudConfig(
             access_token="tok", phone_number_id="1", graph_version="18.0"
-        )
+        ),
+        client=CloudApiDouble().client(),
     )
 
 
@@ -110,18 +123,29 @@ async def test_connector_receipts_verify_under_composed_verifier():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="kailash-py#1182 audit-emit signing-bytes bug",
-)
-async def test_runtime_execute_end_to_end_gated_on_sdk_fix():
+async def test_runtime_execute_end_to_end_completes():
+    """End-to-end ``await runtime.execute(...)`` completes on kailash >= 2.28.1.
+
+    kailash-py#1182 (audit-emit signed the event payload bytes while
+    AuditChainEngine verified the full entry signing bytes) is fixed at
+    <= 2.28.1. The xfail marker is removed; the assertion now holds.
+
+    The service window for the recipient is pre-warmed via the composed
+    connector's window tracker so a freeform text payload passes the pre-flight
+    TemplateGate (WhatsApp requires either an approved template or an open 24h
+    customer-service window for freeform text; the window tracker is injectable
+    for deterministic testing). The Cloud API call terminates at the injected
+    in-process CloudApiDouble — no real HTTP request leaves the test.
+    """
     composed = build_whatsapp_runtime(
         cloud_api=_cloud_api(),
         ingest=_ingest(),
         sender_phone=_SENDER_PHONE,
         approved_templates={"order_update"},
     )
+    # Pre-warm the service window so the freeform payload is gate-allowed.
+    recipient_normalized = normalize_e164(_SENDER_PHONE)
+    composed.connector._template_gate._window.record_inbound(recipient_normalized)
+
     result = await composed.runtime.execute({"to": _SENDER_PHONE, "text": "hi"})
-    # When the SDK is fixed this assertion will hold and the strict xfail flips
-    # to XPASS (forcing the marker to be removed once the SDK ships the fix).
     assert result.taod_state.phase == "completed"
