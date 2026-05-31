@@ -94,22 +94,16 @@ async def test_connector_write_path_carries_verifiable_envelope(slack_api_double
     assert verify_action_envelope(envelope, composed.verifier, observed_at=observed_at)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "kailash-py#1182 audit-emit signature bug. The runtime audit-emit path "
-        "signs the event payload bytes but AuditChainEngine verifies the full "
-        "entry signing bytes; runtime.execute() fails at the first phase "
-        "transition under any real verifier. See compose.py 'KNOWN SDK BLOCKER'. "
-        "The connector's own read/write receipts verify (Tier-1 + "
-        "test_postmessage_roundtrip); this e2e outcome is gated on the SDK fix."
-    ),
-    strict=True,
-)
 async def test_runtime_execute_e2e_against_double_completes(slack_api_double):
+    """End-to-end run completes against the socket double on kailash >= 2.28.0.
+
+    Was strict-xfailed on kailash-py#1182 (audit-emit signed payload bytes while
+    AuditChainEngine verified full entry bytes; execute() failed at the first
+    phase transition). Fixed at <= 2.28.1 (workspaces/whatsapp/journal/0008); the
+    marker is removed and the run now completes carrying a dispatch result.
+    """
     composed = _composed(slack_api_double)
     result = await composed.runtime.execute(_post_payload())
-    # When the SDK is fixed: the run completes and the dispatch result carries a
-    # verifiable signed action envelope.
     assert result.taod_state.phase == "completed"
     assert result.dispatch_result is not None
 
@@ -117,11 +111,15 @@ async def test_runtime_execute_e2e_against_double_completes(slack_api_double):
 async def test_runtime_execute_is_deterministic_across_two_runs(slack_api_double):
     """Two fresh runtimes given identical input produce agreeing receipts.
 
-    ``assert_receipts_agree`` deep-compares the ordered audit chain (per-run
-    run_id + wall-clock timestamps excluded). This demonstrates the intra-impl
-    determinism the spec asks v0 to show. It holds regardless of the SDK
-    execute() bug because both runs reach the SAME deterministic outcome (the
-    double returns a stable ts for an identical channel+text).
+    ``assert_receipts_agree`` deep-compares the receipt tree minus the per-run
+    identity fields: ``run_id`` + the per-transition ``at`` timestamp, plus the
+    three fields that are per-run-by-design now that execute() completes —
+    ``dispatch_id`` (a fresh UUID per dispatch), ``audit_head_hash`` and
+    ``audit_chain_entries`` (SHA-256 hashes that incorporate ``dispatch_id`` and
+    per-run audit state). Audit-chain *integrity* (round-trip + head-hash
+    re-validation) is a distinct property covered by the conformance vector
+    DV-9-001; this test asserts the *outcome* is deterministic (same phase,
+    transition shape, dispatch result) for identical input.
     """
     payload = _post_payload()
     r1 = await _composed(slack_api_double).runtime.execute(dict(payload))
@@ -130,7 +128,15 @@ async def test_runtime_execute_is_deterministic_across_two_runs(slack_api_double
     assert_receipts_agree(
         r1.to_dict(),
         r2.to_dict(),
-        exclude_fields=frozenset({"run_id", "at"}),
+        exclude_fields=frozenset(
+            {
+                "run_id",
+                "at",
+                "dispatch_id",
+                "audit_head_hash",
+                "audit_chain_entries",
+            }
+        ),
     )
 
 
