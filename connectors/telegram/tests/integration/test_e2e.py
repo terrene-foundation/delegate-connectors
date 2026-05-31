@@ -3,13 +3,11 @@
 """Tier-3 e2e: compose a DelegateRuntime and drive it against the Bot API double.
 
 The end-to-end ``runtime.execute()`` OUTCOME assertion (a COMPLETED run carrying
-a verifiable SignedActionEnvelope) is GATED on an SDK fix: the shipped
-``kailash.delegate`` runtime audit-emit path signs the event PAYLOAD bytes while
-``AuditChainEngine.emit_event`` verifies the FULL audit-entry signing bytes, so
-``execute()`` fails at the first phase transition under ANY real verifier
-(kailash-py#1182, compose.py module docstring "KNOWN SDK BLOCKER"). The outcome
-assertion is a STRICT xfail — when the SDK ships the fix it flips to XPASS and
-forces the marker's removal.
+a verifiable SignedActionEnvelope) was previously GATED on kailash-py#1182 (the
+runtime audit-emit path signed the event PAYLOAD bytes while
+``AuditChainEngine.emit_event`` verified the FULL audit-entry signing bytes, so
+``execute()`` failed at the first phase transition). Fixed at kailash <= 2.28.0 —
+the strict-xfail marker is removed and the run now completes.
 
 Intra-impl receipt determinism is asserted SEPARATELY via
 ``assert_receipts_agree``: it holds regardless of the phase outcome, which is

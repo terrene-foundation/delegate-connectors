@@ -3,11 +3,10 @@
 """Tier-1 unit tests for runtime composition (compose.py).
 
 These prove compose BUILDS a valid, reusable DelegateRuntime with the real
-shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion is
-gated on an SDK fix (kailash-py#1182 — same SDK failure mode the email connector
-reproduces) and is marked xfail with a precise reason — NOT skipped silently and
-NOT faked. The connector-level signed write envelope verifies under the composed
-verifier as a real pass, not xfail.
+shipped concretes (no mocks). The end-to-end ``runtime.execute()`` assertion was
+previously gated on kailash-py#1182 (xfail); fixed at kailash <= 2.28.0 — it now
+completes and is asserted as a real pass. The connector-level signed write
+envelope also verifies under the composed verifier.
 """
 
 from __future__ import annotations
