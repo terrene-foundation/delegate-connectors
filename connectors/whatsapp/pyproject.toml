@@ -14,8 +14,9 @@ license = "Apache-2.0"
 authors = [{ name = "Terrene Foundation" }]
 keywords = ["kailash", "delegate", "connector", "whatsapp", "meta", "cloud-api"]
 dependencies = [
-    # kailash.delegate namespace shipped in 2.24.0; dev/CI pins 2.26.2.
-    "kailash>=2.24.0",
+    # Connector ABC (write/read/authenticate) + Principal/SignedActionEnvelope
+    # landed in kailash 2.26.1; 2.24.0-2.25.2 ImportError on Principal. dev/CI pins 2.26.2.
+    "kailash>=2.26.1",
     # Outbound transport is a generic HTTP client against Meta's first-party
     # Graph API — NOT a vendor aggregator SDK (WA-ADR-1, journal 0002).
     "httpx>=0.27",

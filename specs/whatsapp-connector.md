@@ -274,6 +274,22 @@ assertion is a strict xfail in the conformance + e2e suites; the connector-level
 send → drain round-trip and receipt verification are not gated. Same failure mode
 as the email + slack + telegram connectors.
 
+### 9.1 Write-envelope `observed_at` not a first-class field (upstream API gap)
+
+`SignedActionEnvelope` (`kailash.delegate.dispatch`) has no `observed_at` field,
+unlike `AttestedReadReceipt` which carries `observed_at: datetime` as a
+first-class field. The connector DOES bind `observed_at` into the SIGNED
+`canonical_bytes` (via `build_action_signing_bytes`), so the timestamp is
+cryptographically committed and verification is sound. But because it is not
+exposed ON the envelope object, `verify_action_envelope` requires the caller to
+SUPPLY `observed_at` out-of-band (it cannot re-derive it from the envelope
+alone, the way the read path does from `receipt.observed_at`). This is an
+API-ergonomics / independent-verifiability gap, NOT a forgery vector. The
+root-cause fix is upstream — add `observed_at` as a first-class field on
+`SignedActionEnvelope`, symmetric with `AttestedReadReceipt` — and is being
+raised as a kailash issue rather than worked around at the connector layer
+(which would diverge the connectors' payload contract from the SDK).
+
 ## 10. Configuration
 
 All credentials are env-only (no silent default; a typed error on absence). The
@@ -301,10 +317,16 @@ All credentials are env-only (no silent default; a typed error on absence). The
 
 Nothing is hardcoded; nothing sensitive is logged.
 
-**kailash dependency floor**: `pyproject.toml` declares `kailash>=2.24.0` (the
-release in which the `kailash.delegate` namespace shipped), but the ABC this
-connector implements is verified at **kailash 2.26.2** (dev/CI pins 2.26.2; the
-floor is the minimum that carries the namespace, the pin is the verified target).
+**kailash dependency floor**: `pyproject.toml` declares `kailash>=2.26.1` — the
+first release in which the 4-primitive `Connector` ABC (`write`/`read`/
+`authenticate` + `auth_verifier`/`ledger`/`revocation` properties) AND
+`Principal`/`SignedActionEnvelope`/`AttestedReadReceipt` all resolve. kailash
+2.24.0–2.25.2 carry the `kailash.delegate` namespace but ImportError on
+`Principal` (verified empirically across the wheel set). The ABC is verified at
+**kailash 2.26.2** (dev/CI pin). Note: kailash 2.27.0+ loosened the `Connector`
+ABC back to a single abstract `invoke` — imports still resolve and this
+connector implements a superset, so it remains compatible, but the connectors
+are verified only at 2.26.2 (test against latest before any PyPI release).
 Consistent with how slack-connector.md handles the same split. The Cloud API base
 host is the published Meta endpoint `https://graph.facebook.com`
 (`cloud_api.py:69`); the per-call path is

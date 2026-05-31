@@ -28,7 +28,7 @@ connectors/email/
 ## pyproject essentials
 
 - `name = "delegate-connector-email"`, dynamic version.
-- `dependencies = ["kailash>=2.24.0"]` (delegate shipped 2.24.0; dev pins 2.26.2).
+- `dependencies = ["kailash>=2.26.1"]` (Connector ABC + Principal/SignedActionEnvelope landed 2.26.1; below that, ImportError; dev pins 2.26.2).
 - `[tool.hatch.build.targets.wheel] packages = ["src/delegate_connectors"]`.
 - Namespace: `delegate_connectors.email` (PEP 420 implicit namespace — siblings like
   `delegate_connectors.slack` coexist without collision).
@@ -39,5 +39,5 @@ connectors/email/
 - No root `pyproject.toml` today; v0 may add a workspace root or keep per-connector
   packages independent. v0 decision: per-connector independent packages (no root
   workspace) — simplest; matches "each connectors/<channel>/ is a fresh package".
-- `kailash>=2.24.0` is the floor (delegate namespace). Dev/CI install 2.26.2.
+- `kailash>=2.26.1` is the floor (first version where the 4-primitive Connector ABC + `Principal`/`SignedActionEnvelope` resolve; 2.24.0–2.25.2 ImportError). Dev/CI install 2.26.2.
 - Foundation independence: NO dependency on the proprietary Rust sibling.
