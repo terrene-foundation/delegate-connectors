@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "SlackWebConfig",
     "SlackWebConfigError",
+    "SlackTransportError",
     "SlackTransport",
     "PostResult",
 ]
@@ -56,6 +57,17 @@ _DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api/"
 
 class SlackWebConfigError(ValueError):
     """Raised when required Slack Web API configuration is absent from the environment."""
+
+
+class SlackTransportError(RuntimeError):
+    """Raised when ``chat.postMessage`` is rejected by Slack at the API level.
+
+    Slack returns ``{"ok": false, "error": "<code>"}`` at HTTP 200 when a post
+    is rejected (``channel_not_found``, ``not_in_channel``, ``is_archived`` …).
+    The transport MUST raise on that envelope so the connector under audit
+    aborts BEFORE signing — a signed envelope must only ever attest a send that
+    actually occurred. Carries Slack's ``error`` code; never the bot token.
+    """
 
 
 def _require_env(name: str) -> str:
@@ -176,10 +188,12 @@ class SlackTransport:
         ``message`` carries the already-validated ``channel`` + the already
         mrkdwn-escaped ``text`` (the :class:`OutboundSlackMessage` construction
         boundary handles both). Logs intent + outcome at INFO (never the token).
-        Raises on transport failure — the caller (connector under audit)
-        propagates it. Slack's ``response["ok"] == False`` is propagated as
-        ``PostResult(ok=False, ...)`` so the audit chain records the negative
-        outcome rather than masking it.
+        Raises :class:`SlackTransportError` when Slack rejects the post at the
+        API level (``response["ok"] == False``) OR when ``ok`` is true but the
+        message timestamp (``ts``) is absent — either case means no addressable
+        message was delivered. The connector under audit propagates the raise so
+        it aborts BEFORE signing; a signed envelope must never attest a send the
+        API did not actually perform. Mirrors the Telegram/WhatsApp transports.
         """
         if not isinstance(
             message, OutboundSlackMessage
@@ -199,6 +213,24 @@ class SlackTransport:
         ok = bool(data.get("ok", False))
         ts = str(data.get("ts", ""))
         channel = str(data.get("channel", message.channel))
+        if not ok:
+            # API-level rejection at HTTP 200 — abort before the connector signs.
+            error_code = str(data.get("error", "unknown"))
+            logger.warning(
+                "slack.web.post_message.rejected",
+                extra={"channel": channel, "error": error_code},
+            )
+            raise SlackTransportError(f"Slack chat.postMessage rejected: {error_code}")
+        if not ts:
+            # ok:true but no message timestamp — no addressable message landed.
+            logger.warning(
+                "slack.web.post_message.missing_ts",
+                extra={"channel": channel},
+            )
+            raise SlackTransportError(
+                "Slack chat.postMessage returned ok:true with an empty 'ts'; "
+                "no addressable message id to attest"
+            )
         logger.info(
             "slack.web.post_message.ok",
             extra={"channel": channel, "ok": ok, "ts": ts},

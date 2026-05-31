@@ -30,12 +30,20 @@ import hmac
 import json
 import logging
 import os
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from delegate_connectors.whatsapp.redaction import redact_phone
 
 logger = logging.getLogger(__name__)
+
+#: Upper bound on the in-process ingest buffer. A flood of verified deliveries
+#: that the ``read`` thunk never drains would otherwise grow the buffer without
+#: limit (memory-exhaustion DoS). At capacity the oldest buffered message is
+#: evicted and the eviction is logged at WARN — silent loss of a verified
+#: inbound is itself a signal the reader is not draining fast enough.
+DEFAULT_MAX_BUFFERED = 10_000
 
 __all__ = [
     "WebhookConfig",
@@ -206,6 +214,7 @@ class WebhookIngest:
         config: WebhookConfig,
         *,
         window_sink: Callable[[str, str], None] | None = None,
+        max_buffered: int = DEFAULT_MAX_BUFFERED,
     ) -> None:
         if not isinstance(
             config, WebhookConfig
@@ -213,17 +222,31 @@ class WebhookIngest:
             raise TypeError(  # pyright: ignore[reportUnreachable]
                 f"WebhookIngest.config MUST be a WebhookConfig; got {type(config).__name__}"
             )
+        if max_buffered < 1:
+            raise ValueError(
+                f"WebhookIngest.max_buffered MUST be >= 1; got {max_buffered}"
+            )
         self._config = config
-        self._buffer: list[InboundMessage] = []
+        self._max_buffered = max_buffered
+        # Bounded FIFO: a deque(maxlen) evicts the oldest on overflow rather
+        # than growing without limit. drain_one popleft()s the oldest.
+        self._buffer: deque[InboundMessage] = deque(maxlen=max_buffered)
         # window_sink(normalized_e164, timestamp) records the last-inbound time
         # for the 24h customer-service window gate (todo 06).
         self._window_sink = window_sink
 
     @classmethod
     def from_env(
-        cls, *, window_sink: Callable[[str, str], None] | None = None
+        cls,
+        *,
+        window_sink: Callable[[str, str], None] | None = None,
+        max_buffered: int = DEFAULT_MAX_BUFFERED,
     ) -> "WebhookIngest":
-        return cls(WebhookConfig.from_env(), window_sink=window_sink)
+        return cls(
+            WebhookConfig.from_env(),
+            window_sink=window_sink,
+            max_buffered=max_buffered,
+        )
 
     @property
     def config(self) -> WebhookConfig:
@@ -255,6 +278,14 @@ class WebhookIngest:
             return 0
         parsed = parse_inbound_envelope(payload)
         for message, window_key in parsed:
+            if len(self._buffer) >= self._max_buffered:
+                # deque(maxlen) will evict the oldest verified message on this
+                # append — surface it (silent loss of a verified inbound means
+                # the read thunk is not draining fast enough). No payload bytes.
+                logger.warning(
+                    "whatsapp.webhook.buffer_full",
+                    extra={"max_buffered": self._max_buffered},
+                )
             self._buffer.append(message)
             if self._window_sink is not None and window_key:
                 # window_key is the bare-digit form; passed DIRECTLY to the sink
@@ -270,7 +301,7 @@ class WebhookIngest:
         """
         if not self._buffer:
             return None
-        return self._buffer.pop(0)
+        return self._buffer.popleft()
 
     def drain_all(self) -> list[InboundMessage]:
         """Pop and return all buffered messages in FIFO order, emptying the buffer."""

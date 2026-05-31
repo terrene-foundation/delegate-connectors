@@ -23,6 +23,8 @@ live ``WHATSAPP_*`` creds are present (journal 0003 Gap A), never a mock.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from kailash.delegate import assert_receipts_agree
@@ -154,13 +156,11 @@ async def test_live_meta_sandbox(whatsapp_test_env):
         envelope=composed.dispatch_surface.envelope,
     )
     # A real Meta send returns a wamid; the audited envelope verifies.
+    # observed_at is bound into canonical_bytes (NOT echoed in payload), so it
+    # MUST be recovered from the signed bytes — mirrors slack's e2e idiom. The
+    # prior `verify_action_envelope(..., observed_at=payload.get(...)) or
+    # verifier.verify(...)` form was a false-green: payload.get returned "" so
+    # the envelope-level check always failed and the `or` fallback masked it.
     assert envelope.payload["wamid"].startswith("wamid.")
-    assert verify_action_envelope(
-        envelope,
-        composed.verifier,
-        observed_at=envelope.payload.get("observed_at", ""),
-    ) or composed.verifier.verify(
-        envelope.canonical_bytes,
-        envelope.signature,
-        str(composed.identity.delegate_id),
-    )
+    observed_at = json.loads(envelope.canonical_bytes.decode("utf-8"))["observed_at"]
+    assert verify_action_envelope(envelope, composed.verifier, observed_at=observed_at)

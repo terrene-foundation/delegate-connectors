@@ -19,6 +19,7 @@ from delegate_connectors.slack.messages import (
 from delegate_connectors.slack.web_api import (
     PostResult,
     SlackTransport,
+    SlackTransportError,
     SlackWebConfig,
     SlackWebConfigError,
 )
@@ -118,15 +119,35 @@ async def test_post_message_sends_correct_call_shape():
     assert result.ts == "1234567890.000100"
 
 
-async def test_post_message_propagates_negative_outcome():
-    """A Slack ``ok: false`` MUST propagate, not be masked as success."""
+async def test_post_message_raises_on_negative_outcome():
+    """A Slack ``ok: false`` MUST raise so the connector aborts before signing.
+
+    Signing an envelope for a post Slack rejected would forge proof of a send
+    that never happened. The transport raises :class:`SlackTransportError`
+    carrying Slack's ``error`` code — never masking the rejection as success.
+    """
     fake = _FakeAsyncWebClient(
         post_response={"ok": False, "error": "channel_not_found"}
     )
     transport = _transport(fake)
     msg = OutboundSlackMessage(channel="C0123456789", text="hi")
-    result = await transport.post_message(msg)
-    assert result.ok is False
+    with pytest.raises(SlackTransportError, match="channel_not_found"):
+        await transport.post_message(msg)
+
+
+async def test_post_message_raises_on_ok_true_empty_ts():
+    """``ok: true`` with no ``ts`` means no addressable message landed → raise.
+
+    A signed envelope whose ``ts`` is empty points to no Slack message; the
+    transport refuses it rather than letting the connector attest a phantom.
+    """
+    fake = _FakeAsyncWebClient(
+        post_response={"ok": True, "ts": "", "channel": "C0123456789"}
+    )
+    transport = _transport(fake)
+    msg = OutboundSlackMessage(channel="C0123456789", text="hi")
+    with pytest.raises(SlackTransportError, match="empty 'ts'"):
+        await transport.post_message(msg)
 
 
 async def test_post_message_requires_outbound_message_type():

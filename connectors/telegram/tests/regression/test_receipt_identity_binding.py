@@ -15,6 +15,8 @@ payload), the determinism + tamper assertions fail.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from delegate_connectors.telegram.connector import (
@@ -22,6 +24,12 @@ from delegate_connectors.telegram.connector import (
     verify_read_receipt,
 )
 from delegate_connectors.telegram.transport import InboundUpdate
+
+
+def _observed_at(envelope) -> str:
+    """Recover the observed_at bound into a write envelope's signed bytes."""
+    return json.loads(envelope.canonical_bytes.decode("utf-8"))["observed_at"]
+
 
 pytestmark = [pytest.mark.regression, pytest.mark.asyncio]
 
@@ -100,7 +108,16 @@ async def test_tampered_signer_fails_verification(telegram_regression_composed):
         signer_delegate_id="attacker-delegate-id",
         payload=envelope.payload,
     )
-    assert verify_action_envelope(tampered, composed.verifier, observed_at="") is False
+    # Pass the REAL observed_at so the signer mismatch is the ONLY reason
+    # verification fails. (Passing observed_at="" would re-derive divergent
+    # bytes and return False on the empty-string mismatch alone, never reaching
+    # the signer-binding check this test claims to exercise — a false-green.)
+    assert (
+        verify_action_envelope(
+            tampered, composed.verifier, observed_at=_observed_at(envelope)
+        )
+        is False
+    )
     assert not composed.verifier.verify(
         tampered.canonical_bytes, tampered.signature, "attacker-delegate-id"
     )

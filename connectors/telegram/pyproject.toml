@@ -14,8 +14,9 @@ license = "Apache-2.0"
 authors = [{ name = "Terrene Foundation" }]
 keywords = ["kailash", "delegate", "connector", "telegram", "bot-api"]
 dependencies = [
-    # kailash.delegate namespace shipped in 2.24.0; dev/CI pins 2.26.2.
-    "kailash>=2.24.0",
+    # Connector ABC (write/read/authenticate) + Principal/SignedActionEnvelope
+    # landed in kailash 2.26.1; 2.24.0-2.25.2 ImportError on Principal. dev/CI pins 2.26.2.
+    "kailash>=2.26.1",
     # Ed25519Verifier requires the cryptography lib (kailash [trust] extra
     # ships it; declared here because this connector composes a real
     # Ed25519Verifier directly).
@@ -42,6 +43,7 @@ packages = ["src/delegate_connectors"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "integration: real-infra Tier-2/3 tests (require a running local Bot API service)",
