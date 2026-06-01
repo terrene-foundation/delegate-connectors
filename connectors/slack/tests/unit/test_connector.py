@@ -141,6 +141,9 @@ async def test_trust_properties_return_concretes_never_raise(fixture):
     conn = fixture["connector"]
     assert isinstance(conn.auth_verifier, Ed25519Verifier)
     assert conn.ledger is not None  # InMemoryKnowledgeLedger
+    # revocation is the production fail-closed channel over a fresh-signed empty
+    # denylist: "anyone" is genuinely NOT on the verified-fresh list (a REAL
+    # answer), NOT the deleted unconditional-False placeholder.
     assert conn.revocation.is_revoked("anyone") is False
 
 

@@ -28,6 +28,11 @@ Submodules (populated by the Phase-0 wave shards):
 
 from delegate_connectors_host.bound_transport import BoundTransport, bind_transport
 from delegate_connectors_host.ledger import DurableKnowledgeLedger
+from delegate_connectors_host.revocation import (
+    ProductionRevocationChannel,
+    StaticSignedDenylist,
+    default_revocation_channel,
+)
 
 __version__ = "0.1.0"
 
@@ -35,4 +40,7 @@ __all__ = [
     "BoundTransport",
     "bind_transport",
     "DurableKnowledgeLedger",
+    "ProductionRevocationChannel",
+    "StaticSignedDenylist",
+    "default_revocation_channel",
 ]

@@ -24,10 +24,12 @@ Audited primitives:
   the audited :meth:`write` path and returns a ``ConnectorInvocationResult``.
 
 Trust properties: ``auth_verifier`` returns the supplied ``Ed25519Verifier``.
-``ledger`` / ``revocation`` return Protocol-satisfying deterministic adapters
-(in-memory append-only ledger; never-revoked channel) — these are dumb data
-endpoints, NOT custom trust primitives (the SDK ships only the Protocols, not
-concretes). Signing / verification stays with the shipped Ed25519 stack.
+``ledger`` returns a Protocol-satisfying deterministic in-memory append-only
+adapter. ``revocation`` returns the host's production
+:class:`~delegate_connectors_host.revocation.ProductionRevocationChannel`
+(``default_revocation_channel()``) — a fail-closed, signed-denylist channel, NOT
+the deleted unconditional-``False`` placeholder. Signing / verification stays
+with the shipped Ed25519 stack.
 
 No credential ever enters a log line or an audit payload.
 
@@ -54,12 +56,14 @@ from kailash.delegate.dispatch import (
     Connector,
     ConnectorInvocationResult,
     Principal,
+    RevocationChannel,
     SignedActionEnvelope,
 )
 from kailash.delegate.envelope import DelegateConstraintEnvelope
 from kailash.delegate.types import DelegateIdentity
 from kailash.delegate.verifier import Ed25519Verifier
 
+from delegate_connectors_host.revocation import default_revocation_channel
 from delegate_connectors_host.signing_bytes import (
     build_action_signing_bytes,
     build_read_signing_bytes,
@@ -83,7 +87,6 @@ __all__ = [
     "SlackConnector",
     "ConnectorAuthenticationError",
     "InMemoryKnowledgeLedger",
-    "NeverRevokedChannel",
     "build_action_signing_bytes",
     "build_read_signing_bytes",
     "verify_action_envelope",
@@ -117,19 +120,6 @@ class InMemoryKnowledgeLedger:
     @property
     def records(self) -> tuple[tuple[str, dict[str, Any]], ...]:
         return tuple(self._records)
-
-
-class NeverRevokedChannel:
-    """Protocol-satisfying revocation channel (``RevocationChannel``).
-
-    v0 has no revocation source wired, so every principal is live. A
-    deterministic data endpoint (always ``False``), NOT a mock. A real
-    revocation backend binds structurally in a later shard without changing
-    the connector contract.
-    """
-
-    def is_revoked(self, delegate_id: str) -> bool:
-        return False
 
 
 class SlackConnector(Connector):
@@ -191,7 +181,7 @@ class SlackConnector(Connector):
         self._verifier = verifier
         self._tenant_id = tenant_id
         self._ledger = InMemoryKnowledgeLedger()
-        self._revocation = NeverRevokedChannel()
+        self._revocation = default_revocation_channel()
 
     # ── Trust properties (3) ────────────────────────────────────────────
 
@@ -204,7 +194,7 @@ class SlackConnector(Connector):
         return self._ledger
 
     @property
-    def revocation(self) -> NeverRevokedChannel:
+    def revocation(self) -> RevocationChannel:
         return self._revocation
 
     # ── Internal signing helper ─────────────────────────────────────────

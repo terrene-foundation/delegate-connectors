@@ -11,7 +11,9 @@ connector must never hold:
 - **Host-side signing** — the host holds the Ed25519 key and signs only over the side effect it
   itself brokered and observed (a connector cannot forge a receipt for a delivery that never happened).
 - **Production trust primitives** — `KnowledgeLedger` / `RevocationChannel` concretes replacing the
-  in-connector placeholders (`NeverRevokedChannel→False` is deleted).
+  in-connector placeholders. The former always-live revocation stub (an unconditional `is_revoked →
+False`) is deleted; the host's `ProductionRevocationChannel` fails closed on cold start, bad
+  signature, or a stale signed denylist, so every `False` is a verified-fresh-signed real answer.
 
 The host↔connector package boundary **is** the trust boundary established in Phase 0 of the
 connector-platform pivot. See `workspaces/connector-platform/02-plans/01-architecture.md` §3.5 and
