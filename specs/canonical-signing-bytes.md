@@ -1,56 +1,109 @@
-# Spec — Canonical Signing Bytes & Receipt Wire Form (NORMATIVE)
+# Spec — Canonical Signing Bytes & Receipt Wire Form (NORMATIVE, FROZEN v1)
 
-**Status:** ACTIVE — describes the **shipped** receipt-signing behavior of every connector in
-this repo (verifiable against `connectors/*/src/.../connector.py` on `main`).
+**Status:** **FROZEN v1** — the receipt-signing core is hardened and ready for a second
+implementation (the Rust `dc-enterprise` tier) to build against. Adversarially probed for
+Python↔Rust silent-break edge cases (2026-06-01).
 **Audience:** any implementation that must produce or verify Delegate connector receipts
-**byte-for-byte interoperably** — including the Rust `dc-enterprise` tier.
+**byte-for-byte interoperably**.
 **Conformance language:** MUST / SHOULD / MAY per RFC 2119.
 
-This is the single load-bearing cross-implementation contract. A `SignedActionEnvelope` or
-`AttestedReadReceipt` produced by one implementation **MUST** verify under another's verifier.
-One field-order, encoding, or timestamp-format difference breaks **100%** of cross-impl
-verifications, silently (the receipt still "looks signed"). There is **zero** tolerance for
-ambiguity here.
+This is the single load-bearing cross-implementation contract. One field-order, encoding,
+timestamp, key-order, integer, or escaping difference breaks **100%** of cross-impl
+verifications, **silently** (the receipt still "looks signed"). Every clause below was probed
+against the actual Python encoder AND a Rust `serde_json` cross-check; where they diverge from a
+"standard" (notably RFC 8785/JCS), that is called out explicitly.
 
-> **Scope note.** This file pins the _connector-receipt_ signing layer (`SignedActionEnvelope`,
-> `AttestedReadReceipt`). It is **distinct** from the SDK _dispatch audit-event_ signing layer
+> **Distinct from the audit layer.** This pins the _connector-receipt_ signing layer
+> (`SignedActionEnvelope`, `AttestedReadReceipt`). The SDK _dispatch audit-event_ layer
 > (`kailash.delegate.audit.content_signing_bytes`, pre-image `{event_type, event_payload,
-signer_delegate_id}`, signature rendered as 128-char hex). The two are **different pre-images
-> and different wire forms** — see §4. Do not conflate them.
+signer_delegate_id}`, signature 128-char hex) is a **different pre-image and wire form** — §4.
 
 ---
 
 ## 1. Canonical JSON encoding (the shared primitive)
 
-Every signed byte string in this spec is the UTF-8 encoding of a **canonical JSON** document.
-Canonical JSON is defined **language-neutrally** as:
+Every signed byte string here is the **strict UTF-8** encoding of a **canonical JSON** document.
+The Python reference encoder is:
 
-1. **Object keys MUST be sorted** ascending by Unicode code point, **at every nesting level**.
-2. **No insignificant whitespace.** The item separator is `,` (U+002C) and the key/value
-   separator is `:` (U+003A), with **no** spaces or newlines anywhere.
-3. **Non-ASCII characters MUST be emitted literally** as UTF-8 (NOT `\uXXXX`-escaped). E.g.
-   `é` is the two bytes `0xC3 0xA9`, not `é`.
-4. **Booleans** are lowercase `true` / `false`; **null** is `null`.
-5. **Integers** are rendered as bare decimal digits with no decimal point, no leading `+`, no
-   leading zeros (except `0` itself), no exponent.
-6. **Strings** use standard JSON escaping for the mandatory escapes only (`"`, `\`, and
-   control chars U+0000–U+001F); all other characters (including non-ASCII) are literal.
-7. **Arrays** preserve element order; each element is canonicalized recursively by this rule.
-8. **NaN / Infinity / -0.0 MUST be rejected** (not valid JSON per RFC 8259).
+```python
+json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+```
 
-> **Reference implementation (informative):** Python `json.dumps(obj, sort_keys=True,
-separators=(",",":"), ensure_ascii=False)` (`kailash.trust._json.canonical_json_dumps`).
-> The rule above is normative; the Python call is one conforming encoder.
+`allow_nan=False` is **REQUIRED** (§1.4). The rules below are normative; the call is one
+conforming encoder.
 
-### 1.1 Floating-point numbers — HAZARD (constrained)
+### 1.1 Key ordering — Unicode code point, **NOT** RFC 8785/JCS
 
-Floating-point number canonicalization diverges across languages (Python `repr`-based vs Rust
-`ryu` vs Go `strconv`) and is **NOT** pinned by this version of the spec. Therefore: signed
-payloads/manifests **SHOULD NOT** contain JSON floating-point numbers. Decimal quantities
-**MUST** be carried as strings (e.g. `"amount": "10.50"`) or integers (minor units). An
-implementation that emits a float into a signed pre-image is **non-conforming** until a future
-revision pins float rendering. (Connector receipt payloads are connector-controlled, so this is
-enforceable at the connector boundary.)
+Object keys MUST be sorted ascending by **Unicode scalar value (code point)** at every nesting
+level — equivalently, by the **raw UTF-8 byte sequence** of each key (UTF-8 byte order ==
+code-point order). This is **NOT** RFC 8785 / JCS, which sorts by **UTF-16 code unit** and
+produces a _different_ order for any key containing a character above U+FFFF.
+
+- Implementations **MUST NOT** use a JCS / RFC-8785 library for key ordering.
+- Python `json.dumps(sort_keys=True)` is correct as-is. Rust `BTreeMap<String, _>` or
+  `Vec<String>::sort()` is correct as-is (both are UTF-8 byte order == code-point order).
+- Probed: `{"😀", "�"}` → `�` (replacement char) sorts **before** `😀` (U+1F600) —
+  the _opposite_ of UTF-16 order. Locked by Vector D (§6).
+
+### 1.2 Object keys MUST be strings
+
+All object keys MUST already be strings before canonicalization. Non-string keys
+(int/float/bool/null) are **FORBIDDEN**; the canonicalizer MUST reject any mapping with a
+non-`str` key at every level. _(Rationale: Python sorts typed keys numerically then stringifies,
+so int keys `1,2,10` emit as `"1","2","10"` — an order no string-keyed verifier reproduces.)_
+
+### 1.3 Integers — domain `[-(2^63-1), 2^64-1]`
+
+Signed-pre-image integers MUST lie in the closed range `[-(2^63-1), 2^64-1]` (representable as
+Rust `i64` **or** `u64`). Out-of-range values MUST be **rejected by the producer before signing**
+— a `serde_json` verifier cannot round-trip them: `to_value(≥2^64)` errors, and parsing a bare
+`2^128` literal **silently coerces to `f64`** (lossy; injects a forbidden float; re-serializes to
+different bytes). The canonicalizer MUST raise on out-of-range ints, never emit them. Integers in
+`(2^53, 2^64-1]` are permitted but **MUST NOT** flow through any JavaScript `JSON.parse` consumer
+(JS `Number` collides at `2^53+1`); if JS interop is in scope (owner decision — §7), cap at
+`2^53-1` (`9007199254740991`) or carry the value as a decimal string. Integers render as bare
+decimal digits — no leading `+`, no leading zeros (except `0`), no exponent.
+
+### 1.4 No floats; reject NaN/Infinity
+
+JSON floating-point numbers are **FORBIDDEN** in any signed pre-image (cross-language float
+formatting — Python `repr` vs Rust `ryu` vs Go `strconv` — is not pinned by v1). Decimal
+quantities MUST be carried as strings (`"10.50"`) or integer minor-units. The canonicalizer MUST
+enforce this at the connector boundary (not rely on result-shape coincidence). `NaN`, `Infinity`,
+`-Infinity` MUST be **rejected** (`allow_nan=False`) — Python's default `allow_nan=True`
+_silently_ emits the non-JSON tokens `NaN`/`Infinity`/`-Infinity`, which `serde_json` rejects on
+parse, making the pre-image permanently unverifiable with no producer-side error.
+
+### 1.5 Strings — exact escape table, strict UTF-8, no normalization
+
+- **Escape ONLY:** `"` (U+0022 → `\"`), `\` (U+005C → `\\`), U+0008 `\b`, U+0009 `\t`,
+  U+000A `\n`, U+000C `\f`, U+000D `\r`. **All other** characters in U+0000–U+001F escape as
+  `\u00XX` with **lowercase** hex. `/` (U+002F) is **NOT** escaped. U+007F (DEL) and all U+0080+
+  (C1 controls + non-ASCII) are emitted as **raw UTF-8 bytes**, never escaped. No other character
+  is ever escaped. _(Probed byte-identical Python `ensure_ascii=False` ↔ `serde_json` default on
+  all cases — pin it so neither side swaps in a library that escapes `/` or non-ASCII.)_
+- **Lone surrogates** (U+D800–U+DFFF) MUST be **rejected**. Sign over the **strict UTF-8 byte
+  encoding** of the canonical string (`errors='strict'`), never over the Python `str` object —
+  Python `json.dumps` does _not_ raise on a lone surrogate; the failure surfaces only at
+  `.encode("utf-8")`. `serde_json` rejects `\uD83D` on parse, so such a pre-image is unverifiable.
+- **No Unicode normalization** at any stage. NFC (`é` = U+00E9) and NFD (`e` + U+0301) are
+  **distinct** keys/values producing distinct signatures. Callers requiring normalization MUST
+  normalize (recommend NFC) **before** the canonicalizer; the canonicalizer MUST NOT normalize.
+
+### 1.6 Containers & literals
+
+Empty object = `{}`; empty array = `[]`; `null`; booleans `true`/`false` (lowercase, unquoted).
+**No whitespace anywhere** — separators are exactly `,` and `:`. Arrays preserve order; every
+value is canonicalized recursively by these rules at every nesting level.
+
+### 1.7 Duplicate keys — verifier MUST reject
+
+A conforming **verifier/parser** MUST **reject** any received receipt/registry JSON object
+containing duplicate keys (raise — do **not** last-wins). `serde_json`'s default `Value` parser
+silently accepts duplicates and keeps the last, letting an attacker craft a receipt whose
+displayed bytes differ from the canonicalized bytes. Use a duplicate-key-rejecting deserializer
+(a custom visitor erroring on repeat insert). _(A producer Python `dict` cannot hold duplicates;
+this is a verifier-side clause.)_
 
 ---
 
@@ -58,159 +111,129 @@ enforceable at the connector boundary.)
 
 ### 2.1 `SignedActionEnvelope` (a `write`)
 
-The signed bytes are the UTF-8 canonical-JSON encoding of **exactly** this object:
-
-```
-{
-  "action_id":          <string>,   // UUID string form, lowercase, hyphenated
-  "observed_at":        <string>,   // §3 timestamp
-  "payload":            <object>,   // the action result, canonicalized recursively (§1)
-  "signer_delegate_id": <string>    // UUID string form
-}
-```
-
-Covered field set = `{action_id, observed_at, payload, signer_delegate_id}` — **no more, no
-less.** (Key order in the _encoded_ bytes is the §1 sorted order, shown above.) Source:
-`build_action_signing_bytes` (`connectors/email/src/.../connector.py:115`).
+Pre-image object = `{action_id, observed_at, payload, signer_delegate_id}` — **no more, no less**.
+`payload` is canonicalized recursively (§1). `action_id`/`signer_delegate_id` are UUID string
+form (lowercase, hyphenated). Source: `build_action_signing_bytes` (`connector.py:115`).
 
 ### 2.2 `AttestedReadReceipt` (a `read`)
 
-```
-{
-  "attester_delegate_id": <string>,  // UUID string form
-  "manifest":             <object>,  // the read manifest, canonicalized recursively (§1)
-  "observed_at":          <string>,  // §3 timestamp
-  "read_id":              <string>   // UUID string form
-}
-```
+Pre-image object = `{attester_delegate_id, manifest, observed_at, read_id}`. `manifest`
+canonicalized recursively (§1). Source: `build_read_signing_bytes` (`connector.py:140`).
 
-Covered field set = `{attester_delegate_id, manifest, observed_at, read_id}`. Source:
-`build_read_signing_bytes` (`connector.py:140`).
+### 2.3 Verification
 
-### 2.3 Verification contract
-
-A verifier MUST (a) **re-derive** the canonical bytes from the receipt's own identity fields
-and assert they equal the stored `canonical_bytes`, **then** (b) Ed25519-verify the signature
-over those bytes under the signer's public key. Both checks MUST pass. (Source:
-`verify_action_envelope` / `verify_read_receipt`, `connector.py:163,193`.)
+A verifier MUST (a) re-derive the canonical bytes from the receipt's own identity fields and
+assert equality with the stored `canonical_bytes`, then (b) Ed25519-verify the signature over
+those bytes under the signer's public key. Both MUST pass.
 
 ---
 
-## 3. The `observed_at` timestamp (the #1 cross-language trap)
+## 3. The `observed_at` timestamp — **fixed-width** (frozen)
 
-`observed_at` is **inside** the signed pre-image and is **re-derived at verify time**, so its
-string form MUST be byte-identical across implementations. The shipped form is Python
-`datetime.isoformat()` on a UTC-aware datetime:
+`observed_at` is **inside** the signed pre-image and re-derived at verify time, so its string form
+MUST be byte-identical across implementations. **v1 mandates fixed-width**:
 
-- **RFC 3339 / ISO 8601**, e.g. `2026-06-01T12:00:00.789012+00:00`.
-- The UTC offset is the literal `+00:00` — **NOT** `Z`.
-- The fractional-seconds component is **microseconds (6 digits)** when non-zero, and is
-  **OMITTED ENTIRELY when the microsecond component is zero** (Python `isoformat()` behavior):
-  `2026-06-01T12:00:00+00:00` (no `.000000`).
+- **RFC 3339 / ISO 8601, UTC**, with the literal offset `+00:00` (**NOT** `Z`).
+- **Always exactly 6 fractional digits** (microseconds), even when zero:
+  `2026-06-01T12:00:00.000000+00:00`. (Python: `datetime.isoformat(timespec="microseconds")`.)
 
-> **Rust/Go/JS implementers:** your default formatters are wrong here. Rust `chrono`
-> `to_rfc3339()` emits `Z` and a fixed fractional precision; you MUST format to match: `+00:00`
-> offset, and emit the fractional part **only** when microseconds ≠ 0, with exactly 6 digits
-> when present. The two §6 vectors (zero- and non-zero-microsecond) pin both cases. A future
-> revision MAY mandate fixed-width 6-digit fractional to remove the omit-when-zero branch;
-> until then, **match the shipped behavior exactly.**
+This deletes the Python-default omit-when-zero branch (a cross-language footgun). **The Phase-0
+connector rewrite MUST emit `timespec="microseconds")` at all 12 sign/verify call sites
+atomically.** _(History: the yanked 0.1.0 connectors used bare `isoformat()` = omit-when-zero;
+that form is retired with those packages and is NOT a conforming v1 producer.)_
 
----
-
-## 4. Signature wire form (raw vs hex — inconsistent within the codebase; pinned here)
-
-- **`SignedActionEnvelope.signature`** and **`AttestedReadReceipt.attestation`** are **RAW
-  64-byte** Ed25519 detached signatures (`Ed25519PrivateKey.sign()` output, `connector.py:293`).
-  When rendered in a text/JSON transport, they MUST be lowercase hex of the 64 raw bytes
-  (128 hex chars), and decoded back to 64 raw bytes before `Ed25519.verify`.
-- **By contrast**, the SDK dispatch **audit-event** signature (`compose.py` signer thunk) is a
-  **128-char lowercase-hex** string at its own boundary, over the §-different pre-image. Do not
-  reuse one path's wire form for the other.
-
-This raw-vs-hex split is a real inconsistency in the current code. This spec pins both forms as
-they ship; a future revision SHOULD unify on hex-at-the-boundary, raw-into-`verify`.
-
-### 4.1 Keys & fingerprints
-
-- **Public key** wire form: raw 32-byte Ed25519 public key (`public_bytes_raw()`), hex-rendered
-  (64 hex chars) in text transports.
-- **Signing-key fingerprint** (used by the registry, §6 of the protocol spec): lowercase-hex
-  **SHA-256 of the raw 32-byte public key** (64 hex chars). Implementations MUST compute it this
-  way so registry entries agree across impls.
+> **Rust/Go/JS:** your default formatters are wrong. Rust `chrono` `to_rfc3339()` emits `Z` and
+> variable precision; format to match `+00:00` + fixed 6-digit. Vectors A/C (zero-µs) and B
+> (non-zero-µs) lock both renderings.
 
 ---
 
-## 5. Conformance — TWO distinct gates
+## 4. Signature wire form + key/fingerprint
 
-An implementation claiming Delegate-receipt interoperability MUST pass **both**:
+- **`SignedActionEnvelope.signature`** and **`AttestedReadReceipt.attestation`** are **RAW 64-byte**
+  Ed25519 detached signatures (`signing_key.sign()`, `connector.py:293`); rendered as lowercase
+  hex (128 chars) in text transports, decoded to 64 raw bytes before `Ed25519.verify`.
+- The SDK **audit-event** signature is **128-char lowercase hex** over its own (§-different)
+  pre-image. Do not reuse one path's wire form for the other.
+- **Public key:** raw 32-byte (`public_bytes_raw()`), hex (64 chars). **Fingerprint:** lowercase-hex
+  **SHA-256 of the raw 32-byte public key** (64 chars).
 
-1. **Byte reproduction:** given each §6 vector's input + the fixed test key, the implementation
-   reproduces the `canonical_bytes` **byte-for-byte** AND the signature **byte-for-byte**.
-2. **Cross-verification matrix:** implementation A's verifier accepts implementation B's signed
-   receipts and vice versa, over a shared key, for action and read receipts.
+---
+
+## 5. Conformance — TWO gates + the reject suite
+
+An implementation claiming interoperability MUST pass **both**:
+
+1. **Byte reproduction:** given each §6 _accept_ vector's input + the fixed test key, reproduce the
+   `canonical_bytes` **and** signature byte-for-byte.
+2. **Cross-verification matrix:** each implementation's verifier accepts the other's signed
+   receipts, for action and read, over a shared key.
+
+Plus the **reject suite** — the canonicalizer/verifier MUST reject (raise, never sign/accept):
+a float; a NaN/Infinity; an integer outside `[-(2^63-1), 2^64-1]`; a non-string object key; a
+string with a lone surrogate; a JSON object with duplicate keys (verifier side).
 
 Behavioral/outcome conformance (`specs/conformance.md`) is **NOT** sufficient for interop — it
-verifies outcomes, not receipt bytes. These are separate gates; the publish gate requires both.
+verifies outcomes, not receipt bytes.
 
 ---
 
-## 6. Normative test vectors (reproducible)
+## 6. Normative test vectors (reproducible; all verified to round-trip)
 
-**Fixed test key** (publishable; for conformance only — never a production key):
+**Fixed test key** (publishable; conformance only):
 
-|                              | value                                                              |
-| ---------------------------- | ------------------------------------------------------------------ |
-| Ed25519 seed (32 bytes)      | `0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20` |
-| public key (raw 32 bytes)    | `79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664` |
-| pubkey fingerprint (SHA-256) | `65b60673d6ed884bf01c2c222d82ada0740f29ac3355d6a925c81f17f47a27b8` |
+|                       | value                                                              |
+| --------------------- | ------------------------------------------------------------------ |
+| Ed25519 seed          | `0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20` |
+| public key (raw 32B)  | `79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664` |
+| fingerprint (SHA-256) | `65b60673d6ed884bf01c2c222d82ada0740f29ac3355d6a925c81f17f47a27b8` |
 
-### Vector A — action, **zero-microsecond** timestamp
+**A — action, zero-µs (fixed-width `.000000`)**
 
-- Input: `payload={"accepted": true, "to": "ops@x.com"}`,
-  `signer_delegate_id="11111111-1111-1111-1111-111111111111"`,
-  `action_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"`,
-  `observed_at="2026-06-01T12:00:00+00:00"`
-- Canonical bytes (UTF-8):
-  `{"action_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","observed_at":"2026-06-01T12:00:00+00:00","payload":{"accepted":true,"to":"ops@x.com"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
-- Signature (raw 64-byte, hex):
-  `fe7608809ab48aa4ff2151b821a5932b5c59743ea4cf09028d7704f419e2a8084f403eca76bf2412122c92f1e1e8ee96e6ca6e3e56c3be72b760c5b9a4ad5c0f`
+- bytes: `{"action_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"accepted":true,"to":"ops@x.com"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
+- sig: `af74eb243b0c2baaf3bb40f629363f0870aecfd8692c817c80b5980e77dd37856dc2b377917ca0c8363f4bb3dbed2560c6debfee412461cecdfe201708a2690b`
 
-### Vector B — action, **non-zero microsecond + non-ASCII** (`café`)
+**B — action, non-zero-µs + non-ASCII (`café` → `…636166c3a9…`)**
 
-- Input: `payload={"n": 7, "unicode": "café"}`,
-  `signer_delegate_id="11111111-1111-1111-1111-111111111111"`,
-  `action_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"`,
-  `observed_at="2026-06-01T12:00:00.789012+00:00"`
-- Canonical bytes (UTF-8, note `café` → `…636166c3a9…`, `ensure_ascii=false`):
-  `{"action_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","observed_at":"2026-06-01T12:00:00.789012+00:00","payload":{"n":7,"unicode":"café"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
-- Signature (raw 64-byte, hex):
-  `c61c8dbb0f7699b463ee6840b7643a7abf323128d6c1868d0575bce9ce8c9599896bb0f80cd0f0249ad987e9fe0fe50512d2eef96c4ba9786178535e7b6d3302`
+- bytes: `{"action_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","observed_at":"2026-06-01T12:00:00.789012+00:00","payload":{"n":7,"unicode":"café"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
+- sig: `c61c8dbb0f7699b463ee6840b7643a7abf323128d6c1868d0575bce9ce8c9599896bb0f80cd0f0249ad987e9fe0fe50512d2eef96c4ba9786178535e7b6d3302`
 
-### Vector C — read receipt
+**C — read receipt, zero-µs**
 
-- Input: `manifest={"count": 2, "message_ids": ["m1","m2"]}`,
-  `attester_delegate_id="22222222-2222-2222-2222-222222222222"`,
-  `read_id="cccccccc-cccc-cccc-cccc-cccccccccccc"`,
-  `observed_at="2026-06-01T12:00:00+00:00"`
-- Canonical bytes (UTF-8):
-  `{"attester_delegate_id":"22222222-2222-2222-2222-222222222222","manifest":{"count":2,"message_ids":["m1","m2"]},"observed_at":"2026-06-01T12:00:00+00:00","read_id":"cccccccc-cccc-cccc-cccc-cccccccccccc"}`
-- Signature (raw 64-byte, hex):
-  `38905840b0e8143829ecde931419171f0ed02a148dc6692dd7850a6d39bae20f0c742319ecc95ed7127f39403ce2f8f524b71015a887b4d238a1a4d288e78a0d`
+- bytes: `{"attester_delegate_id":"22222222-2222-2222-2222-222222222222","manifest":{"count":2,"message_ids":["m1","m2"]},"observed_at":"2026-06-01T12:00:00.000000+00:00","read_id":"cccccccc-cccc-cccc-cccc-cccccccccccc"}`
+- sig: `b34e4f2a199357ad968f33daecd7b3e138a0f56680f9566a7a490542cde15be63b5bf540444a1ce609b4bf7323df486aa40fff66d1439769cc81f098c9a6260b`
 
-> These vectors were generated from the shipped `build_action_signing_bytes` /
-> `build_read_signing_bytes` under the fixed seed above. A conforming implementation reproduces
-> every `canonical bytes` and `signature` value exactly. They MUST be committed as a
-> cross-language fixture (`tests/fixtures/receipt-interop/`) consumed by both the Python and
-> `dc-enterprise` test suites.
+**D — astral key ordering (locks code-point, NOT UTF-16/JCS): `U+FFFD` sorts before `😀`**
+
+- bytes: `{"action_id":"dddddddd-dddd-dddd-dddd-dddddddddddd","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"�":"replacement","😀":"emoji"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
+- sig: `8b55028b7723becec430c453a135102eec1e4a749061ca3603bd31f37ebe6164626fd5066e281488dbdafbbb6bc88b91a9ce690fd034abf8ba816d3157f0420c`
+
+**E — integer-domain boundary (`2^53-1` and `2^64-1`, both valid bare)**
+
+- bytes: `{"action_id":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"js_safe_max":9007199254740991,"u64_max":18446744073709551615},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
+- sig: `01429d49694eb4b0fa3e01ccfc024a6fe2a72ba8ebe335f27fee794d437fc5766bcf132eb863b3883d9e1d71bf2f1276a762343e9301604141ad225c2cf2c105`
+
+**Reject cases** (no bytes — assert rejection): `2^64`; `float 1.5`; `NaN`; object key `1`
+(int); string `"a\uD83Db"` (lone surrogate); object `{"k":1,"k":2}` (duplicate, verifier side).
+
+> All accept vectors generated from the shipped `build_action/read_signing_bytes` under the fixed
+> seed (timestamps via `timespec="microseconds"`) and verified to round-trip under the published
+> public key. Commit as `tests/fixtures/receipt-interop/`, consumed by both implementations.
 
 ---
 
-## 7. Change control
+## 7. Change control & open prerequisites
 
-This contract is **frozen** once a second implementation depends on it. Any change to the
-covered field set, key-ordering rule, timestamp form, or signature wire form is a
-**breaking protocol change** requiring a `protocol_version` bump (see the protocol spec §0/§8)
-and a coordinated migration across all implementations. Append a dated entry below for any
-revision.
+This contract is **frozen v1**. Any change to the covered field set, key-ordering rule, timestamp
+form, integer domain, escaping, or signature wire form is a **breaking** change requiring a
+`protocol_version` bump + coordinated migration across all implementations.
 
-- 2026-06-01: initial extraction from shipped connector source; vectors pinned.
+Two items remain **owner decisions** (do not block sending §1–§6 to the Rust team — they are
+narrowing, not contradicting): (a) **JS-interop scope** — if JavaScript `JSON.parse` consumers
+are in scope, the integer cap tightens from `2^64-1` to `2^53-1` (§1.3); (b) **`protocol_version`**
+— v1 is defined here with fixed-width timestamps from the start (no prior frozen version shipped;
+the yanked 0.1.0 connectors predate any numbered protocol), so no bump is required to reach this
+v1, but confirm the integer is `1`.
+
+- 2026-06-01: initial extraction + adversarial hardening (9 canonical-JSON edge-case pins, float
+  ban, fixed-width timestamp); vectors regenerated + verified. **Frozen v1.**

@@ -62,8 +62,10 @@ fingerprint = lowercase-hex SHA-256 of the raw 32-byte public key.
   (a) at bind time as a subset of the role scope (`dispatch.py:1434`) AND (b) re-checked at
   dispatch time (`dispatch.py:1606`, the monotonicity runtime re-check). It is **string-equality
   membership only** — it is **NOT** enforced against network egress, filesystem, or syscalls.
-- **[DRAFT] Phase-3 lattice:** a capability MUST bind to a `(method-set, host-class)` enforced by
-  the runtime — e.g. `http.read ⇒ {GET, HEAD}` only, `http.write ⇒ {POST, PUT, PATCH, DELETE}`.
+- **[DRAFT] Phase-3 lattice (owner-gated — §11):** a capability MUST bind to a
+  `(method-set, host-class)` enforced by the runtime — `http.read ⇒ {GET, HEAD}` only (**not**
+  OPTIONS — CORS-preflight recon/SSRF surface) **AND `http.read` MUST forbid request bodies**
+  (method-set alone is not side-effect-free); `http.write ⇒ {POST, PUT, PATCH, DELETE}`.
   Until that lands, implementations MUST NOT claim capability-as-egress-boundary. A Rust impl
   MUST implement the same string-membership semantics as today and MUST NOT invent a phantom
   enforcement the Python side lacks.
@@ -189,13 +191,54 @@ Three distinct, all-required gates:
 
 ---
 
-## 11. Open items the spec MUST resolve before it freezes
+## 11. Freeze status (resolved 2026-06-01 via adversarial hardening — `wf_faa33b0e-65b`)
 
-1. **`connector_kind` namespacing** — global vs `owner/kind` (Terraform). Blocks §6 collision rule.
-2. **Float canonicalization** — currently constrained-out (§1.1); pin or keep forbidden.
-3. **`observed_at` fixed-width** — keep Python omit-when-zero, or mandate 6-digit fixed-width.
-4. **Capability→egress lattice** (§4) — the exact `(method-set, host-class)` mapping.
-5. **Registry signing** — single-key vs threshold N-of-M + transparency log.
+The 5 open items split into **frozen now** (the receipt-signing core — what the Rust team needs
+first) and **owner-gated** (wire contracts for subsystems that don't exist yet).
+
+**✅ FROZEN v1 — `specs/canonical-signing-bytes.md`** (the crypto core; the deliverable to send the
+Rust team now):
+
+- **Item 2 (floats):** FORBIDDEN in signed pre-images; `NaN`/`Infinity` rejected (`allow_nan=False`).
+  Verified: no connector receipt payload uses floats.
+- **Item 3 (timestamp):** fixed-width 6-digit microseconds always (`+00:00`, not `Z`) — kills the
+  omit-when-zero branch. Vectors regenerated (A/C changed, B identical) + verified.
+- **9 NEW canonical-JSON edge-case pins** the hardening surfaced (each empirically probed): key
+  ordering = code-point/UTF-8 byte order (**NOT** RFC 8785/JCS — diverges on astral keys);
+  integer domain `[-(2^63-1), 2^64-1]` (serde_json silently floats `≥2^64`); object keys
+  MUST be strings; exact string-escape table; lone-surrogate reject; duplicate-key reject
+  (verifier); no Unicode normalization; container/literal byte forms. Locked by vectors A–E + a
+  reject suite.
+
+**⏳ OWNER-GATED — cannot freeze (no implementable anchor in this repo; need decisions + the
+registry/protocol-subsystem design first):**
+
+- **Item 1 (`connector_kind` → `owner/kind`):** direction is right (always `owner/kind` on the
+  wire; bare names forbidden in any signed/trust surface), but `owner` derivation has no canonical
+  definition. **Owner must decide:** is `owner` the signing-key fingerprint or an OIDC/PEP-740
+  trusted-publisher anchor? (Recommended: a stable publisher anchor + reserved literal `delegate`
+  for Foundation connectors, with the per-version fingerprint as a _separate_ field — the draft's
+  "fingerprint-OR-OIDC" forks identity on key rotation.) **Prerequisite:** the registry/protocol
+  spec that owns `owner` + the registry keyed on `owner/kind` does not exist yet.
+- **Item 4 (capability→egress lattice):** owner-gated whether it lands in this repo at all (only
+  bare `channel.action` frozensets exist — no interpreter/sandbox/`host_class`). Two corrections
+  locked regardless of where it lands: `http.read` ⇒ `{GET, HEAD}` only (**drop OPTIONS** — CORS
+  preflight recon/SSRF surface) AND `http.read` MUST forbid request **bodies** (method-set alone
+  isn't side-effect-free). MUST NOT be written as Phase-1/Phase-3 split-state prose in `specs/`
+  (`spec-accuracy.md`).
+- **Item 5 (registry signing):** the signature-list/threshold-T design is sound and
+  forward-compatible, but two clauses are unimplementable-as-written: (a) **self-referential
+  signing** — sign over the canonical bytes **with the `signatures` field REMOVED entirely** (not
+  emptied), so the pre-image is identical for 0 or N signatures; (b) **transparency log** —
+  "MUST-publish/SHOULD-verify against an unprovisioned log" is the dead-dependency anti-pattern.
+  **Owner must decide:** downgrade publish to SHOULD until a log is provisioned, OR commit to a
+  concrete log (Sigstore Rekor / a Foundation RFC-6962 Merkle log) + pinned inclusion-proof format
+  - client-verify-MUST-when-present. **Prerequisite:** same missing registry/protocol spec as Item 1.
+
+**Owner decisions still open** (none block sending the frozen crypto core): the Item-1 `owner`-axis
+form; whether Item 4 lands here; the Item-5 transparency-log option (A vs B); JS-interop integer
+scope (`2^64-1` vs `2^53-1`); and authorizing the registry/protocol-subsystem spec (gates Items 1
+& 5).
 
 ## 12. OSS ↔ enterprise alignment (governance)
 
