@@ -11,6 +11,14 @@ capability + sandbox substrate.
 2. [`journal/0001-DECISION-pivot-to-connector-platform.md`](journal/0001-DECISION-pivot-to-connector-platform.md) — the decision record + forensic provenance.
 3. [`01-analysis/00-market-research-dossier.md`](01-analysis/00-market-research-dossier.md) — the cited market study (n8n, Airbyte, HACS, Terraform, Pipedream, Python plugin mechanics, supply-chain trust).
 4. [`02-plans/01-architecture.md`](02-plans/01-architecture.md) — **the architecture** (Architecture C, threat-sequenced) + phased rollout + migration + contributor DX.
+5. [`02-plans/02-protocol-spec.md`](02-plans/02-protocol-spec.md) — **the normative protocol spec** (the wire contract the Rust `dc-enterprise` tier conforms to: capability grammar, manifest/registry schemas, discovery, host-protocol, errors).
+6. [`../../specs/canonical-signing-bytes.md`](../../specs/canonical-signing-bytes.md) — the **byte-pinned crypto core** (canonical bytes, signature wire form, reproducible cross-language test vectors). Shipped behavior; the load-bearing cross-impl contract.
+
+## Redteam status
+
+Architecture redteamed 2026-06-01 (4 adversarial lenses): design **approve-with-edits**,
+cross-impl-alignment **needs-revision** (now addressed — the normative spec + crypto core close
+it). Over-claims verified false in source were corrected; see the architecture doc's revision log.
 
 ## Status
 

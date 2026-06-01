@@ -50,6 +50,14 @@ We do **not** claim "credential-blind" or "run any community connector safely" u
 
 ## 3. Target architecture (Architecture C — Hybrid, threat-sequenced)
 
+> **The wire contract lives in the normative protocol spec, not here.** This section is the
+> design narrative. The contracts a second implementation (the Rust `dc-enterprise` tier) MUST
+> conform to are pinned in **[`02-protocol-spec.md`](02-protocol-spec.md)** (capability grammar,
+> manifest schema, registry schema, discovery descriptor, host-protocol, error taxonomy) and the
+> already-shipped crypto core in **[`specs/canonical-signing-bytes.md`](../../../specs/canonical-signing-bytes.md)**
+> (canonical bytes, signature wire form, reproducible cross-language test vectors). Read those for
+> conformance; read this for rationale.
+
 Two artifact shapes, one discovery group, one signed registry, **sequenced by threat, not by ease.**
 
 ```
@@ -82,7 +90,7 @@ Two artifact shapes, one discovery group, one signed registry, **sequenced by th
 
 Most connectors are HTTP/REST APIs. A connector becomes a **signed YAML manifest** (auth scheme, base URL, per-operation endpoint + pagination + JSONPath response extraction, `allowed_hosts`, `requires_capabilities`) interpreted by **one** core-maintained, hardened `GenericHTTPConnector`. This is Airbyte's low-code CDK applied to Delegate — its single biggest scaling lever (100+ marketplace connectors in one 6-month window).
 
-**Why it is the safe default:** a manifest contains no executable code. The interpreter is the only code; the manifest's `allowed_hosts` **is** the interpreter's egress ceiling; credentials are injected by the interpreter and never enter the manifest. "Credential-blind" and "capability-bounded" are **true by construction** for this tier — no sandbox required. The visual/no-code builder (later) emits the _same_ YAML artifact (Airbyte's "one artifact, two surfaces" lesson — never let easy and real connectors diverge into incompatible formats).
+**Why it is the safe default:** a manifest contains no executable code. The interpreter is the only code; credentials are injected by the interpreter and never enter the manifest, so **"credential-blind" is true by construction** for this tier (a manifest has no code that could read a secret). **"Capability-bounded" is NOT yet true** _(redteam correction)_: capability strings are declarations, not enforced; egress is bounded only by `allowed_hosts`, which itself MUST be SSRF-hardened (resolve + pin the IP, reject RFC1918/loopback/metadata-IP `169.254.169.254`, no redirects, HTTPS-only — protocol spec §5.4). Capability→verb/host enforcement is Phase 3. The visual/no-code builder (later) emits the _same_ YAML artifact (Airbyte's "one artifact, two surfaces" lesson — never let easy and real connectors diverge into incompatible formats).
 
 ### 3.3 Code tier — the ABC + a versioned factory (the escape hatch)
 
@@ -103,7 +111,7 @@ One generated, signed `registry.json` keyed on `connector_kind`, carrying **capa
 Three layers no incumbent ships together:
 
 1. **Load-path gate (Phase 2):** discovery enumerates the whole catalog, but **loading** a _code_ connector is refused unless its `(distribution, version, hash, key-fingerprint)` is on the provenance allowlist. Community code wheels are **catalog-discoverable but not auto-loadable** until allowlisted (or until the sandbox lands). Kind collisions and hash mismatches fail closed.
-2. **Credential broker (Phase 0):** connectors declare `requires_credentials={'smtp'}`; the **host** owns `from_env()` construction and injects a pre-authenticated transport handle (`send(message)`) the connector **cannot introspect** for the secret. The connector receives the existing `signer(canonical_bytes)` thunk (`compose.py:143`), **never** the raw Ed25519 key. Credential-harvesting and receipt-forgery become structurally impossible, not policy-discouraged.
+2. **Credential broker (Phase 0) — a signing-surface refactor, not a flag-flip** _(corrected per redteam; the original claim here was verified FALSE in source)_: connectors declare `requires_credentials={'smtp'}`; the **host** owns `from_env()` and injects an **opaque `BoundTransport`** exposing only `send(...)`/`fetch(...)`. Two things make today's design insufficient, and Phase 0 MUST close both: (a) every existing transport leaks the secret via a public `.config` property (`SmtpConfig.password`, etc.), so injecting the current transports would recreate the n8n `getCredentials()` leak — a **new** non-introspectable handle type is required (no config accessor, credential-redacting repr, no pickling). (b) Handing the connector a `signer(bytes)` thunk is a **forge oracle** — the connector can sign a delivery that never happened, or sign arbitrary bytes under the host key. Receipt signing MUST move **host-side**: the DispatchSurface derives the canonical bytes (`specs/canonical-signing-bytes.md`) from the **host-observed brokered side effect** and signs them — a refactor of the connector's action-signing path (`connector.py:293`), NOT dropping a constructor arg. Until both land, "credential-blind" and "unforgeable" are false and MUST NOT be marketed (§2).
 3. **Out-of-process sandbox (Phase 3):** code connectors run in a **per-connector subprocess** under gVisor/seccomp with an egress allowlist **mechanically derived** from the declared capability frozenset — **not** in-process Python (every in-process Python sandbox is disqualified by live escape CVEs, including n8n's own CVE-2025-68668). Only then does `requires_capabilities` become a syscall-level boundary, and only then can the allowlist gate relax to admit sandboxed community code.
 
 ---
@@ -112,13 +120,15 @@ Three layers no incumbent ships together:
 
 Automated, tiered admission (n8n's manual 3-week-to-3-month human review is the bottleneck to beat):
 
-| Tier                        | Who          | Admission                                                                                        | Runtime                                             |
-| --------------------------- | ------------ | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| **Declarative / community** | anyone       | mechanical: schema-valid manifest + provenance + capability lint + acceptance test → **instant** | interpreter egress-allowlist (safe by construction) |
-| **Official**                | core team    | the 4 references + first-party                                                                   | allowlisted; runs in-process (audited)              |
-| **Verified code**           | contributors | mechanical gates + human review **only for elevated-capability requests**                        | provenance-allowlist → sandbox (Phase 3)            |
+| Tier                        | Who          | Admission                                                                                        | Runtime                                                                                                 |
+| --------------------------- | ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| **Declarative / community** | anyone       | mechanical: schema-valid manifest + provenance + capability lint + acceptance test → **instant** | interpreter egress-allowlist (credential-blind by construction; egress = SSRF-hardened `allowed_hosts`) |
+| **Official**                | core team    | the 4 references + first-party                                                                   | allowlisted; runs in-process (audited)                                                                  |
+| **Verified code**           | contributors | mechanical gates + human review **only for elevated-capability requests**                        | provenance-allowlist → sandbox (Phase 3)                                                                |
 
-Publish gate (all tiers, automated): substrate-conformance vectors **+** PyPI Trusted-Publishing OIDC / PEP 740 provenance **+** static capability-manifest lint **+** a **record-and-replay acceptance test** that proves a `write` issued real declared egress and a `read` parsed a real fixture response (refuses a signed receipt for a send that never happened). The badge splits: **"substrate-conformant"** ≠ **"functionally-verified"** ≠ **"safety-tier"** — never collapsed into one "conformance-passing" label users misread as "safe."
+Publish gate (all tiers, automated): substrate-conformance vectors **+** byte-level receipt-interop vectors (`specs/canonical-signing-bytes.md` §6 — a **separate** gate from behavioral conformance) **+** PyPI Trusted-Publishing OIDC / PEP 740 provenance **+** static capability-manifest lint **+** a **record-and-replay acceptance test** (against a recorded cassette, so it stays mechanical/"instant" — not a live-API call). The acceptance test is **required, and is also a RUNTIME dispatch invariant**, not just a publish-time check: the host refuses to sign a receipt for a side effect it did not observe (so a connector cannot sign a send that never happened, in production, not only at publish). The badge splits: **"substrate-conformant"** ≠ **"receipt-interoperable"** ≠ **"functionally-verified"** ≠ **"safety-tier"** — never collapsed into one "conformance-passing" label users misread as "safe."
+
+> **Conformance-vector dependency** _(redteam — was omitted)_: the canonical behavioral vectors were **not** shipped in the distributed `kailash` wheel (`ConformanceVectorLoader.load_canonical()` raised `FileNotFoundError`; flagged in `workspaces/email/journal/0002-GAP`) and required a cross-repo vendoring action (resolved 2026-05-27, `journal/0012`). The `delegate-conformance` package vendors them; the publish gate depends on it. This is real Phase-1 scope, not a free primitive.
 
 ---
 
@@ -167,8 +177,10 @@ The platform delivers real, safe value at **every** phase without waiting for Ph
 
 1. **Sandbox technology (Phase 3):** per-connector gVisor/seccomp subprocess (preserves native SMTP/IMAP transports; 3–20% overhead; Linux-centric) vs WASI-component (stronger isolation; loses native transports). No reversible default; gates when the full claim can be made.
 2. **Registry hosting + revocation authority:** who operates the signed denylist + compromise-monitoring, and the revocation-fetch TTL (minutes of exposure on a compromised-publisher incident). A standing role, not a static index.
-3. **Acceptance-test gate strictness:** require record-and-replay against the real API as a publish-gate condition (raises the bar slightly; stops conformance-green-but-functionally-broken connectors).
-4. **Re-release version line for the rewritten references** (`0.2.0` vs `1.0.0`).
+3. **Re-release version line for the rewritten references** (`0.2.0` vs `1.0.0`).
+4. **`connector_kind` namespacing:** globally-unique vs publisher-namespaced (`owner/kind`, Terraform model). Blocks the registry collision rule (protocol spec §6/§11).
+
+> _(Resolved, moved out of "open": the acceptance-test gate is **required** — run against a recorded cassette to stay mechanical — AND enforced as a runtime dispatch invariant, see §4. The earlier "parked/undecided" framing was a contradiction the redteam caught.)_
 
 ---
 
@@ -180,3 +192,50 @@ The platform delivers real, safe value at **every** phase without waiting for Ph
 - Python entry-points (`importlib.metadata`, the `pytest11` model), `stevedore`, `pluggy`; PEP 420 namespaces.
 - Supply-chain provenance: PyPI Trusted Publishers + PEP 740 attestations, Sigstore, SLSA.
 - HACS / Terraform Registry / VS Code Marketplace / WordPress — registry + verification-tier models.
+
+---
+
+## 11. OSS ↔ enterprise boundary (governance + Rust `dc-enterprise` alignment)
+
+The connector protocol is an **open Foundation standard (CC BY 4.0)** — `02-protocol-spec.md`.
+The Foundation publishes a **full-featured Apache-2.0 Python implementation** + reference hub;
+it is **not** a teaser or community-edition funnel to a paid tier.
+
+**`dc-enterprise` is an INDEPENDENT Rust implementation of the same protocol.** Both conform to
+the same normative spec and the same cross-language test vectors (`specs/canonical-signing-bytes.md`
+§6). **Shared protocol, divergent implementations** — this is the alignment mechanism: the Rust
+tier aligns to the _spec + vectors_, never to the Python source.
+
+Per `rules/terrene-naming.md` + `rules/independence.md`: `dc-enterprise` is **not** a Foundation
+artifact, MUST NOT be cited as "the reference," and the relationship MUST NOT be described as
+donated / licensed-from / derived-from. **Commercial offerings any entity (including the operator
+of `dc-enterprise`) may build on the open protocol** — private/internal registries, premium
+connector catalogs, SLA hosting, sandbox-as-a-managed-service, usage metering/billing — are **not**
+Foundation tiers. Drawing this line now is cheap; retrofitting private-registry support, license
+headers, and per-tier capability gating after the open architecture calcifies is expensive.
+
+## 12. Tracked completeness gaps (redteam — address in the protocol spec before freeze)
+
+These are real omissions the redteam surfaced; captured here + in `02-protocol-spec.md` so they
+are not lost. **Must-address-in-spec:** inbound/trigger/**read-connector** modeling (the design is
+send-centric, but `read` is 1 of 4 ABC methods, WhatsApp is webhook-driven, and "beat n8n" is a
+_trigger_ product — who owns the public webhook socket at scale, and how is `AttestedReadReceipt`
+produced for platform-ingested data?); **multi-tenancy** isolation invariant (a correctly-signed
+receipt for the _wrong tenant's_ data is NOT caught by the signed-receipt substrate); platform
+**rate-limiting/quota** (allowed-host at 10k req/s is still DoS); `connector_kind` **namespacing**
+(§9.4). **Defer-with-tracking-note:** observability/metering for any billed tier (SHOULD derive
+from the signed audit chain, not a parallel counter); discovery/search/ranking UX; broker
+credential-rotation lifecycle.
+
+---
+
+## Redteam revision log
+
+- **2026-06-01** — 4-lens adversarial redteam (workflow `wf_405bd2d6-850`). Verdict: design
+  `approve-with-edits`, cross-impl-alignment `needs-revision`. Applied: narrowed the §2/§3.2/§3.5/§4
+  trust over-claims verified false in source (credential-blindness, unforgeability, capability-bounded);
+  reframed the broker as a signing-surface refactor; added the conformance-vector dependency; resolved
+  the acceptance-test contradiction (required + runtime invariant via cassette); added this enterprise
+  boundary (§11) and the tracked completeness gaps (§12). Authored the normative protocol spec
+  (`02-protocol-spec.md`) + the byte-pinned crypto core (`specs/canonical-signing-bytes.md`) — the
+  cross-impl contract the Rust tier aligns to. Full disposition: redteam workflow output + this log.
