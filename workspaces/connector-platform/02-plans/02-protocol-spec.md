@@ -235,10 +235,12 @@ registry/protocol-subsystem design first):**
   concrete log (Sigstore Rekor / a Foundation RFC-6962 Merkle log) + pinned inclusion-proof format
   - client-verify-MUST-when-present. **Prerequisite:** same missing registry/protocol spec as Item 1.
 
-**Owner decisions still open** (none block sending the frozen crypto core): the Item-1 `owner`-axis
-form; whether Item 4 lands here; the Item-5 transparency-log option (A vs B); JS-interop integer
-scope (`2^64-1` vs `2^53-1`); and authorizing the registry/protocol-subsystem spec (gates Items 1
-& 5).
+**Owner decisions** — RESOLVED 2026-06-01: JS-interop is **in scope** → integer domain
+`[-(2^53-1), 2^53-1]` (frozen in `canonical-signing-bytes.md` §1.3); **next step = ship the frozen
+crypto core now, design the registry/manifest/sandbox subsystems in Phase 0** (the contracts for
+Items 1/4/5 get frozen as those subsystems are built, so the spec follows the mechanism). Still
+open, deferred to Phase 0 when each subsystem is designed: the Item-1 `owner`-axis form; whether
+Item 4's lattice lands here; the Item-5 transparency-log option (A vs B).
 
 ## 12. OSS ↔ enterprise alignment (governance)
 

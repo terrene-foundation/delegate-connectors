@@ -52,17 +52,21 @@ All object keys MUST already be strings before canonicalization. Non-string keys
 non-`str` key at every level. _(Rationale: Python sorts typed keys numerically then stringifies,
 so int keys `1,2,10` emit as `"1","2","10"` — an order no string-keyed verifier reproduces.)_
 
-### 1.3 Integers — domain `[-(2^63-1), 2^64-1]`
+### 1.3 Integers — domain `[-(2^53-1), 2^53-1]` (JS-safe; owner decision, frozen 2026-06-01)
 
-Signed-pre-image integers MUST lie in the closed range `[-(2^63-1), 2^64-1]` (representable as
-Rust `i64` **or** `u64`). Out-of-range values MUST be **rejected by the producer before signing**
-— a `serde_json` verifier cannot round-trip them: `to_value(≥2^64)` errors, and parsing a bare
-`2^128` literal **silently coerces to `f64`** (lossy; injects a forbidden float; re-serializes to
-different bytes). The canonicalizer MUST raise on out-of-range ints, never emit them. Integers in
-`(2^53, 2^64-1]` are permitted but **MUST NOT** flow through any JavaScript `JSON.parse` consumer
-(JS `Number` collides at `2^53+1`); if JS interop is in scope (owner decision — §7), cap at
-`2^53-1` (`9007199254740991`) or carry the value as a decimal string. Integers render as bare
-decimal digits — no leading `+`, no leading zeros (except `0`), no exponent.
+Signed-pre-image integers MUST lie in the closed range `[-(2^53-1), 2^53-1]` — i.e. JavaScript's
+safe-integer range, `±9007199254740991` (`Number.MAX_SAFE_INTEGER`). Any integer with absolute
+value `≥ 2^53` (`9007199254740992`) MUST be **rejected by the producer before signing** OR carried
+as a **decimal string**, never as a bare JSON number. Integers render as bare decimal digits — no
+leading `+`, no leading zeros (except `0`), no exponent.
+
+> **Why this cap (not the wider `2^64-1`):** JavaScript / browser consumers are in scope (owner
+> decision 2026-06-01). A JS `JSON.parse` collides at `2^53+1` (`Number` is `f64`), so a receipt
+> carrying a larger bare integer verifies in Python/Rust but is silently corrupted the moment any
+> JS client reads it. Capping at `2^53-1` makes the pre-image safe across Python, Rust (`i64`/`u64`
+> both hold it), AND JavaScript. The canonicalizer MUST raise on out-of-range ints, never emit
+> them. (Separately, a bare `≥2^64` literal would make a `serde_json` verifier silently coerce to
+> `f64` — the cap forecloses that too.)
 
 ### 1.4 No floats; reject NaN/Infinity
 
@@ -170,7 +174,7 @@ An implementation claiming interoperability MUST pass **both**:
    receipts, for action and read, over a shared key.
 
 Plus the **reject suite** — the canonicalizer/verifier MUST reject (raise, never sign/accept):
-a float; a NaN/Infinity; an integer outside `[-(2^63-1), 2^64-1]`; a non-string object key; a
+a float; a NaN/Infinity; an integer outside `[-(2^53-1), 2^53-1]`; a non-string object key; a
 string with a lone surrogate; a JSON object with duplicate keys (verifier side).
 
 Behavioral/outcome conformance (`specs/conformance.md`) is **NOT** sufficient for interop — it
@@ -208,13 +212,14 @@ verifies outcomes, not receipt bytes.
 - bytes: `{"action_id":"dddddddd-dddd-dddd-dddd-dddddddddddd","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"�":"replacement","😀":"emoji"},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
 - sig: `8b55028b7723becec430c453a135102eec1e4a749061ca3603bd31f37ebe6164626fd5066e281488dbdafbbb6bc88b91a9ce690fd034abf8ba816d3157f0420c`
 
-**E — integer-domain boundary (`2^53-1` and `2^64-1`, both valid bare)**
+**E — integer JS-safe boundary (`±(2^53-1)` = `±9007199254740991`, both valid bare)**
 
-- bytes: `{"action_id":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"js_safe_max":9007199254740991,"u64_max":18446744073709551615},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
-- sig: `01429d49694eb4b0fa3e01ccfc024a6fe2a72ba8ebe335f27fee794d437fc5766bcf132eb863b3883d9e1d71bf2f1276a762343e9301604141ad225c2cf2c105`
+- bytes: `{"action_id":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","observed_at":"2026-06-01T12:00:00.000000+00:00","payload":{"max_safe":9007199254740991,"min_safe":-9007199254740991},"signer_delegate_id":"11111111-1111-1111-1111-111111111111"}`
+- sig: `e11846a488e5155de6c9483409ac7401bac0e6dc9ad99727849b3afd196245e3c15f0e293ce1536b83d2492e5628a1c5fa274e5dddc93d43e581a37af851820d`
 
-**Reject cases** (no bytes — assert rejection): `2^64`; `float 1.5`; `NaN`; object key `1`
-(int); string `"a\uD83Db"` (lone surrogate); object `{"k":1,"k":2}` (duplicate, verifier side).
+**Reject cases** (no bytes — assert rejection): `9007199254740992` (`2^53`, first JS-unsafe int);
+`float 1.5`; `NaN`; object key `1` (int); string `"a\uD83Db"` (lone surrogate); object
+`{"k":1,"k":2}` (duplicate, verifier side).
 
 > All accept vectors generated from the shipped `build_action/read_signing_bytes` under the fixed
 > seed (timestamps via `timespec="microseconds"`) and verified to round-trip under the published
@@ -228,12 +233,11 @@ This contract is **frozen v1**. Any change to the covered field set, key-orderin
 form, integer domain, escaping, or signature wire form is a **breaking** change requiring a
 `protocol_version` bump + coordinated migration across all implementations.
 
-Two items remain **owner decisions** (do not block sending §1–§6 to the Rust team — they are
-narrowing, not contradicting): (a) **JS-interop scope** — if JavaScript `JSON.parse` consumers
-are in scope, the integer cap tightens from `2^64-1` to `2^53-1` (§1.3); (b) **`protocol_version`**
-— v1 is defined here with fixed-width timestamps from the start (no prior frozen version shipped;
-the yanked 0.1.0 connectors predate any numbered protocol), so no bump is required to reach this
-v1, but confirm the integer is `1`.
+Owner decisions affecting this core are **resolved** (2026-06-01): (a) **JS-interop scope** —
+JavaScript consumers ARE in scope, so the integer domain is `[-(2^53-1), 2^53-1]` (§1.3), final;
+(b) **`protocol_version` = `1`** — defined here with fixed-width timestamps from the start (no
+prior frozen version shipped; the yanked 0.1.0 connectors predate any numbered protocol), so no
+bump is required to reach this v1. §1–§6 are **final and ready to hand to a second implementation.**
 
 - 2026-06-01: initial extraction + adversarial hardening (9 canonical-JSON edge-case pins, float
   ban, fixed-width timestamp); vectors regenerated + verified. **Frozen v1.**
