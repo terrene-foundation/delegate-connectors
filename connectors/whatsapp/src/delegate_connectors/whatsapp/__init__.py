@@ -33,6 +33,8 @@ from delegate_connectors.whatsapp.connector import (
     InMemoryKnowledgeLedger,
     NeverRevokedChannel,
     WhatsAppConnector,
+)
+from delegate_connectors_host.signing_bytes import (
     build_action_signing_bytes,
     build_read_signing_bytes,
     verify_action_envelope,
