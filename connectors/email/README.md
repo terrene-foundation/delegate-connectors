@@ -61,17 +61,18 @@ real SMTP `:3025` + real IMAP `:3143`) for the inbound IMAP round-trip — Mailp
 v1.30.0 ships no IMAP server. If Docker is unavailable the integration tests skip
 with a clear reason (they do not fake the boundary).
 
-## Known limitation — runtime `execute()` audit gate
+## Runtime execution — end-to-end
 
-`compose.py` builds a real `DelegateRuntime` around the connector. However the
-shipped `kailash.delegate` runtime/dispatch audit-emit path signs the event
-payload bytes while `AuditChainEngine.emit_event` verifies the signature against
-the full audit-entry signing bytes — so `runtime.execute()` fails at the first
-audit emission under any real verifier. This is an SDK bug in `kailash.delegate`,
-not in this connector; the connector's own `read`/`write` receipts verify
-correctly. See `workspaces/email/journal/0005-GAP-*` for the full evidence and
-reproduction. The end-to-end `runtime.execute()` assertion is gated on the SDK
-fix; the connector-level SMTP→IMAP round-trip and receipt verification are not.
+`compose.py` builds a real `DelegateRuntime` around the connector
+(`build_email_runtime`), and `runtime.execute(...)` runs the full signed
+dispatch end-to-end on `kailash >= 2.28.0`: a COMPLETED run whose audit chain
+verifies under a real `Ed25519Verifier`. The end-to-end `runtime.execute()`
+assertion is exercised in the integration + conformance suites (it skips, never
+fakes, when the Mailpit/GreenMail backends are unavailable).
+
+> Historical note: earlier drafts (kailash `< 2.28.0`) hit an SDK audit-emit
+> signature mismatch (kailash-py#1182) that failed `runtime.execute()` at the
+> first audit emission. That is fixed; the connector floor is `kailash >= 2.28.0`.
 
 ## License
 

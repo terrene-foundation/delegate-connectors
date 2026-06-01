@@ -100,8 +100,8 @@ class EmailV0Signature:
 class ComposedEmailRuntime:
     """The composed runtime plus the handles a caller needs to drive it.
 
-    ``runtime.execute(payload)`` is the dispatch entry (see the module-level
-    KNOWN SDK BLOCKER). ``connector`` is the bound :class:`EmailConnector`;
+    ``runtime.execute(payload)`` is the dispatch entry (runs end-to-end on
+    kailash >= 2.28.0). ``connector`` is the bound :class:`EmailConnector`;
     ``verifier`` verifies every receipt the connector signs; ``identity`` is the
     dispatch identity registered as the cascade root grantee.
     """

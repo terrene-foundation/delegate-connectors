@@ -82,9 +82,13 @@ python -m pytest connectors/telegram/tests/regression -q
 
 The opt-in Tier-3 live test (`test_live_telegram`) skips with a clear "cannot
 execute" reason unless real `TELEGRAM_*` credentials are present — it never falls
-back to a mock. The end-to-end `runtime.execute()` outcome assertions are
-strict-`xfail` gated on an SDK fix (kailash-py#1182); the connector's own
-read / write receipts verify today.
+back to a mock. The end-to-end `runtime.execute()` outcome assertions run on
+`kailash >= 2.28.0` (a COMPLETED run whose audit chain verifies under a real
+`Ed25519Verifier`); the connector's own read / write receipts verify alongside.
+
+> Historical note: earlier drafts (kailash `< 2.28.0`) hit an SDK audit-emit
+> signature mismatch (kailash-py#1182) that failed `runtime.execute()` at the
+> first audit emission. That is fixed; the connector floor is `kailash >= 2.28.0`.
 
 ## License
 

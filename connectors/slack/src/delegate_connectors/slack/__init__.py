@@ -12,7 +12,7 @@ boundary, principal resolution). The transport + connector + runtime composition
 land in later shards.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from delegate_connectors.slack.directory import (
     ResolutionOutcome,

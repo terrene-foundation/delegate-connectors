@@ -106,17 +106,18 @@ authenticate-first fail-closed gate, outbound construction-boundary validation):
 python -m pytest connectors/slack/tests/regression -q
 ```
 
-## Known limitation — runtime `execute()` audit gate
+## Runtime execution — end-to-end
 
-`compose.py` builds a real `DelegateRuntime` around the connector. However the
-shipped `kailash.delegate` runtime/dispatch audit-emit path signs the event
-payload bytes while `AuditChainEngine.emit_event` verifies the signature against
-the full audit-entry signing bytes — so `runtime.execute()` fails at the first
-audit emission under any real verifier (kailash-py#1182). This is an SDK bug in
-`kailash.delegate`, not in this connector; the connector's own `read`/`write`
-receipts verify correctly. The end-to-end `runtime.execute()` assertion is gated
-on the SDK fix (a strict xfail in the conformance + e2e suites); the
-connector-level post → history round-trip and receipt verification are not.
+`compose.py` builds a real `DelegateRuntime` around the connector, and
+`runtime.execute(...)` runs the full signed dispatch end-to-end on
+`kailash >= 2.28.0`: a COMPLETED run whose audit chain verifies under a real
+`Ed25519Verifier`. The end-to-end `runtime.execute()` assertion is exercised in
+the conformance + e2e suites; the connector-level post → history round-trip and
+receipt verification are covered independently.
+
+> Historical note: earlier drafts (kailash `< 2.28.0`) hit an SDK audit-emit
+> signature mismatch (kailash-py#1182) that failed `runtime.execute()` at the
+> first audit emission. That is fixed; the connector floor is `kailash >= 2.28.0`.
 
 ## License
 

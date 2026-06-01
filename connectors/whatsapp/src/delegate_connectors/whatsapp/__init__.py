@@ -11,7 +11,7 @@ composition land in later waves. See the package README + ``specs/`` (and the
 v0 contract in ``workspaces/whatsapp/02-plans/``) for the full design.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from delegate_connectors.whatsapp.cloud_api import (
     CloudApiConfigError,

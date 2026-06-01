@@ -22,7 +22,7 @@ modules are imported from their own submodules directly (e.g.
 ``from delegate_connectors.telegram.transport import TelegramTransport``).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from delegate_connectors.telegram.directory import (
     ResolutionOutcome,

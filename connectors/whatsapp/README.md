@@ -116,20 +116,19 @@ PYTHONPATH=connectors/whatsapp/src python -m pytest \
   connectors/whatsapp/tests/conformance connectors/whatsapp/tests/regression -q
 ```
 
-## Known limitation — runtime `execute()` audit gate
+## Runtime execution — end-to-end
 
 `compose.py` builds a real `DelegateRuntime` (over a `DispatchSurface`) around
 the connector via `build_whatsapp_runtime`, driven with `await runtime.execute(...)`
-(the dispatch entry is async — journal 0001). However the shipped
-`kailash.delegate` runtime/dispatch
-audit-emit path signs the event payload bytes while `AuditChainEngine.emit_event`
-verifies the signature against the full audit-entry signing bytes — so
-`runtime.execute()` fails at the first audit emission under any real verifier.
-This is an SDK bug in `kailash.delegate` (kailash-py#1182), not in this
-connector; the connector's own `read`/`write` receipts verify correctly (proven
-in the Tier-1 suite). The end-to-end `runtime.execute()` assertion is gated on
-the SDK fix (strict-xfail across the unit / integration / conformance suites);
-the connector-level send round-trip and receipt verification are not.
+(the dispatch entry is async — journal 0001). On `kailash >= 2.28.0` this runs
+the full signed dispatch end-to-end: a COMPLETED run whose audit chain verifies
+under a real `Ed25519Verifier`. The end-to-end `runtime.execute()` assertion is
+exercised across the unit / integration / conformance suites, alongside the
+connector's own `read`/`write` receipt verification.
+
+> Historical note: earlier drafts (kailash `< 2.28.0`) hit an SDK audit-emit
+> signature mismatch (kailash-py#1182) that failed `runtime.execute()` at the
+> first audit emission. That is fixed; the connector floor is `kailash >= 2.28.0`.
 
 ## License
 

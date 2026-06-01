@@ -8,7 +8,7 @@ against a ``PrincipalDirectory``. See the package README + ``specs/`` in the
 monorepo root for the full contract.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from delegate_connectors.email.connector import EmailConnector
 from delegate_connectors.email.directory import (

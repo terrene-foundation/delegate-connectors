@@ -9,6 +9,22 @@ This file covers all four connectors, which release together at a shared version
 `delegate-connector-email`, `delegate-connector-slack`,
 `delegate-connector-telegram`, and `delegate-connector-whatsapp`.
 
+## [0.1.1] - 2026-06-01
+
+### Fixed
+
+- **Documentation accuracy.** Removed the stale "Known limitation — runtime
+  `execute()` audit gate" sections from all four connector READMEs (the
+  long-description shown on each PyPI page). Those sections described an SDK
+  audit-emit bug (kailash-py#1182) that fails `runtime.execute()` — but that bug
+  was fixed at `kailash >= 2.28.0`, which is the connectors' dependency floor.
+  `runtime.execute()` now runs the full signed dispatch end-to-end. Replaced with
+  an accurate "Runtime execution — end-to-end" section plus a historical note.
+- Corrected the matching stale `compose.py` docstring cross-references
+  ("see the module-level KNOWN SDK BLOCKER") in all four connectors.
+
+No code behavior changed — documentation-only patch.
+
 ## [0.1.0] - 2026-06-01
 
 Initial public release. Four OSS connectors for the Terrene Delegate substrate
@@ -28,4 +44,5 @@ on the Kailash Python SDK (`kailash >= 2.28.0`).
 - Ed25519-signed action envelopes verified end-to-end through the Kailash
   runtime audit chain.
 
+[0.1.1]: https://github.com/terrene-foundation/delegate-connectors/releases/tag/v0.1.1
 [0.1.0]: https://github.com/terrene-foundation/delegate-connectors/releases/tag/v0.1.0
