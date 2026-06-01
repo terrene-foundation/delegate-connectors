@@ -11,7 +11,19 @@ description = "OSS Slack connector for the Terrene Delegate substrate (kailash.d
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Terrene Foundation" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 keywords = ["kailash", "delegate", "connector", "slack", "chat", "messaging"]
 dependencies = [
     # Connector ABC (write/read/authenticate) + Principal/SignedActionEnvelope
@@ -44,6 +56,7 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/terrene-foundation/delegate-connectors"
+Changelog = "https://github.com/terrene-foundation/delegate-connectors/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/delegate_connectors/slack/__init__.py"
@@ -58,5 +71,5 @@ testpaths = ["tests"]
 markers = [
     "integration: real-infra Tier-2/3 tests (require a running Slack Web API mock-server container)",
     "regression: regression tests guarding a specific fixed bug (NEVER deleted)",
-    "conformance: canonical conformance vector tests (well-formedness now; per-vector outcome xfail-gated on kailash-py#1182)",
+    "conformance: canonical conformance vector tests",
 ]

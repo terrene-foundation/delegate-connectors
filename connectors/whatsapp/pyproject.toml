@@ -11,7 +11,19 @@ description = "OSS WhatsApp connector for the Terrene Delegate substrate (kailas
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Terrene Foundation" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 keywords = ["kailash", "delegate", "connector", "whatsapp", "meta", "cloud-api"]
 dependencies = [
     # Connector ABC (write/read/authenticate) + Principal/SignedActionEnvelope
@@ -34,6 +46,7 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/terrene-foundation/delegate-connectors"
+Changelog = "https://github.com/terrene-foundation/delegate-connectors/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/delegate_connectors/whatsapp/__init__.py"
