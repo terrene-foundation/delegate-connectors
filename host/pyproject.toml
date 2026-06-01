@@ -1,0 +1,62 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "delegate-connectors-host"
+dynamic = ["version"]
+description = "Host-side trust surface for the Terrene Delegate connector platform (credential broker, host-side signing, production trust primitives)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Terrene Foundation" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["kailash", "delegate", "connector", "trust", "credential-broker", "host"]
+dependencies = [
+    # Connector ABC, DispatchSurface, Ed25519Verifier, the KnowledgeLedger /
+    # RevocationChannel Protocols, kailash.trust canonical-JSON helpers.
+    "kailash>=2.28.0",
+    # Ed25519 signature verification for the production RevocationChannel's
+    # signed-denylist consultation + the host-side signer.
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/terrene-foundation/delegate-connectors"
+Changelog = "https://github.com/terrene-foundation/delegate-connectors/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/delegate_connectors_host/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/delegate_connectors_host"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: real-infra Tier-2/3 tests",
+    "regression: regression tests guarding a specific fixed bug (NEVER deleted)",
+    "conformance: canonical conformance vector tests",
+]
