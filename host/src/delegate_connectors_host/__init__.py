@@ -26,6 +26,13 @@ Submodules (populated by the Phase-0 wave shards):
 - ``bound_transport`` — the opaque non-introspectable ``BoundTransport`` (P0-06)
 """
 
+from delegate_connectors_host.bound_transport import BoundTransport, bind_transport
+from delegate_connectors_host.ledger import DurableKnowledgeLedger
+
 __version__ = "0.1.0"
 
-__all__: list[str] = []
+__all__ = [
+    "BoundTransport",
+    "bind_transport",
+    "DurableKnowledgeLedger",
+]
