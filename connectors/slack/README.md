@@ -26,9 +26,10 @@ transport:
   `ConnectorInvocationResult`.
 - Trust properties — `auth_verifier` returns the supplied real
   `Ed25519Verifier`; `ledger` returns an in-memory `InMemoryKnowledgeLedger`;
-  `revocation` returns a never-revoked `NeverRevokedChannel` (both
-  Protocol-satisfying deterministic concretes; framework-first, no custom trust
-  primitives).
+  `revocation` returns the host's production fail-closed
+  `ProductionRevocationChannel` (via `default_revocation_channel()`) over a
+  fresh-signed empty denylist — Protocol-satisfying concretes; framework-first,
+  no custom trust primitives.
 
 It subclasses `Connector` **directly** (ADR-1) — NOT `LegacyInvokeConnector`,
 whose proxied `read`/`write` emit empty, unverifiable receipts. This connector's
