@@ -24,9 +24,15 @@ Submodules (populated by the Phase-0 wave shards):
 - ``revocation``      — production ``RevocationChannel`` concrete (P0-02)
 - ``signing_bytes``   — the shared canonical signing-bytes helpers (P0-04)
 - ``bound_transport`` — the opaque non-introspectable ``BoundTransport`` (P0-06)
+- ``credential_broker`` — the host-side credential broker (P0-07)
+- ``dispatch_observation`` — the host-observation seam, closes the forge oracle (P0-08a)
 """
 
 from delegate_connectors_host.bound_transport import BoundTransport, bind_transport
+from delegate_connectors_host.canonical_domain import (
+    NonConformantPayloadError,
+    assert_canonical_signing_domain,
+)
 from delegate_connectors_host.credential_broker import (
     CredentialBroker,
     CredentialBrokerError,
@@ -34,6 +40,12 @@ from delegate_connectors_host.credential_broker import (
     ScopedBroker,
     UngrantedCredentialError,
     UnknownCredentialClassError,
+)
+from delegate_connectors_host.dispatch_observation import (
+    DispatchObservationSeam,
+    ObservedSideEffect,
+    Summarize,
+    UnobservedSideEffectError,
 )
 from delegate_connectors_host.ledger import DurableKnowledgeLedger
 from delegate_connectors_host.revocation import (
@@ -57,4 +69,10 @@ __all__ = [
     "ProductionRevocationChannel",
     "StaticSignedDenylist",
     "default_revocation_channel",
+    "DispatchObservationSeam",
+    "ObservedSideEffect",
+    "Summarize",
+    "UnobservedSideEffectError",
+    "NonConformantPayloadError",
+    "assert_canonical_signing_domain",
 ]
