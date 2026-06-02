@@ -20,6 +20,7 @@ import pytest
 
 from delegate_connectors.whatsapp.redaction import (
     REDACTION_SENTINEL,
+    RedactionConfig,
     redact_phone,
 )
 from delegate_connectors.whatsapp.webhook import InboundMessage
@@ -27,6 +28,11 @@ from delegate_connectors.whatsapp.webhook import InboundMessage
 from .conftest import SENDER_PHONE
 
 pytestmark = [pytest.mark.regression, pytest.mark.asyncio]
+
+# P0-07: the connector's startup gate validates this key (the conftest `wa`
+# fixture sets it in the env before construction). Tests that drive
+# redact_phone directly thread the SAME key the connector validated.
+_PII_KEY = "test-pii-hmac-key-min-len"
 
 
 def _ledger_blob(connector) -> str:
@@ -98,7 +104,8 @@ async def test_read_receipt_omits_sender_wa_id(wa):
     async def thunk():
         return [
             InboundMessage(
-                sender_redacted=redact_phone(SENDER_PHONE),
+                # P0-07: thread the same startup key the connector validated.
+                sender_redacted=redact_phone(SENDER_PHONE, hmac_key=_PII_KEY),
                 message_type="text",
                 text="hello",
                 timestamp="1700000000",
@@ -122,23 +129,28 @@ async def test_read_receipt_omits_sender_wa_id(wa):
     assert _ledger_blob(conn).count(SENDER_PHONE) == 0
 
 
-async def test_redaction_failure_surfaces_sentinel_never_raw_number(wa, monkeypatch):
+async def test_redaction_failure_surfaces_sentinel_never_raw_number(wa):
     """On a transient redaction failure, the audit payload carries the sentinel.
 
     Simulate the runtime-soft half of the dual contract: a per-message redaction
-    failure (e.g. a transient missing key at one call site) MUST collapse to the
+    failure (e.g. a transient unusable key at one call site) MUST collapse to the
     grep-able sentinel in the audit payload — NEVER the raw number, NEVER a raise.
+
+    P0-07: the key is now THREADED from the connector's startup-validated
+    ``RedactionConfig`` rather than re-read from os.environ per message. The
+    transient-glitch state is therefore modeled by replacing the connector's
+    held config with an empty-key config (a rotated-to-unusable key) — the
+    faithful equivalent of the old "delete the env-var after construction"
+    scenario, now expressed where the key actually lives.
     """
     conn, identity = wa["connector"], wa["identity"]
 
-    # Force redaction to fail at the per-message call site by deleting the key
-    # AFTER construction (the startup gate already ran). redact_phone is
-    # fail-soft: it returns REDACTION_SENTINEL, never the raw value.
-    from delegate_connectors.whatsapp.redaction import PII_HMAC_KEY_ENV
-
-    monkeypatch.delenv(PII_HMAC_KEY_ENV, raising=False)
-    # Sanity: redact_phone itself now yields the sentinel, not the raw number.
-    assert redact_phone(SENDER_PHONE) == REDACTION_SENTINEL
+    # Simulate the transient glitch: the held key became unusable (empty).
+    # redact_phone is fail-soft on an absent/empty key — it returns the
+    # sentinel, never the raw value.
+    conn._redaction_config = RedactionConfig(hmac_key="")
+    # Sanity: redacting under the unusable key yields the sentinel, not raw.
+    assert redact_phone(SENDER_PHONE, hmac_key="") == REDACTION_SENTINEL
 
     async def thunk():
         return {"wamid": "wamid.X", "wa_id": SENDER_PHONE, "to": SENDER_PHONE}

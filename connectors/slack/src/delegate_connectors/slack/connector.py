@@ -263,7 +263,7 @@ class SlackConnector(Connector):
             payload,
             signer_delegate_id=signer_delegate_id,
             action_id=str(action_id),
-            observed_at=observed_at.isoformat(),
+            observed_at=observed_at.isoformat(timespec="microseconds"),
         )
         signature = self._sign(canonical_bytes)
         self._ledger.record(DelegateEventType.EXTERNAL_SIDE_EFFECT.value, payload)
@@ -306,7 +306,7 @@ class SlackConnector(Connector):
             manifest,
             attester_delegate_id=attester_delegate_id,
             read_id=str(read_id),
-            observed_at=observed_at.isoformat(),
+            observed_at=observed_at.isoformat(timespec="microseconds"),
         )
         attestation = self._sign(canonical_bytes)
         self._ledger.record(DelegateEventType.CONSTRAINT_DECISION.value, manifest)

@@ -28,10 +28,16 @@ from delegate_connectors.whatsapp.cloud_api import (
     WhatsAppCloudApiError,
     WhatsAppCloudConfig,
 )
+from delegate_connectors.whatsapp.redaction import RedactionConfig
 
 # A representative recipient and its bare-digit normalization, reused below.
 _RAW_TO = "+1 (415) 555-0100"
 _DIGITS = "14155550100"
+
+# P0-07: the transport threads a STARTUP-validated PII-HMAC key into its
+# log-line redaction. Inject it explicitly so the test is self-contained (no
+# os.environ dependency) and exercises the threaded-key path.
+_REDACTION = RedactionConfig(hmac_key="test-pii-hmac-key-min-len")
 
 
 def _config() -> WhatsAppCloudConfig:
@@ -40,6 +46,10 @@ def _config() -> WhatsAppCloudConfig:
         phone_number_id="1234567890",
         graph_version="18.0",
     )
+
+
+def _api(client: httpx.AsyncClient) -> WhatsAppCloudApi:
+    return WhatsAppCloudApi(_config(), client=client, redaction_config=_REDACTION)
 
 
 # ── OutboundMessage.to_body — request body construction ──────────────────
@@ -202,7 +212,7 @@ async def test_send_posts_meta_messages_shape_and_returns_sendresult():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(responder))
     try:
-        api = WhatsAppCloudApi(_config(), client=client)
+        api = _api(client)
         result = await api.send(OutboundMessage(to=_RAW_TO, text="hi"))
     finally:
         await client.aclose()
@@ -236,7 +246,7 @@ async def test_send_raises_rate_limited_on_429_response():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(responder))
     try:
-        api = WhatsAppCloudApi(_config(), client=client)
+        api = _api(client)
         with pytest.raises(RateLimitedError) as exc:
             await api.send(OutboundMessage(to=_RAW_TO, text="hi"))
         assert exc.value.retry_after == 7
@@ -251,7 +261,7 @@ async def test_send_raises_cloud_api_error_on_generic_failure():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(responder))
     try:
-        api = WhatsAppCloudApi(_config(), client=client)
+        api = _api(client)
         with pytest.raises(WhatsAppCloudApiError) as exc:
             await api.send(OutboundMessage(to=_RAW_TO, text="hi"))
         assert not isinstance(exc.value, RateLimitedError)
@@ -269,7 +279,7 @@ async def test_send_falls_back_to_request_to_when_wa_id_absent():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(responder))
     try:
-        api = WhatsAppCloudApi(_config(), client=client)
+        api = _api(client)
         result = await api.send(OutboundMessage(to=_RAW_TO, text="hi"))
         # wa_id falls back to the invariant-normalized request `to`.
         assert result.wa_id == _DIGITS
@@ -285,7 +295,7 @@ async def test_send_raises_when_messages_id_missing_from_envelope():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(responder))
     try:
-        api = WhatsAppCloudApi(_config(), client=client)
+        api = _api(client)
         with pytest.raises(WhatsAppCloudApiError, match="messages"):
             await api.send(OutboundMessage(to=_RAW_TO, text="hi"))
     finally:

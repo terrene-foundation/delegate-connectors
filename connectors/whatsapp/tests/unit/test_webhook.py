@@ -234,7 +234,9 @@ def test_buffer_rejects_non_positive_max(monkeypatch):
 def test_parse_envelope_redacts_and_extracts_text(monkeypatch):
     monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
     payload = json.loads(_inbound_payload(text="parsed body").decode())
-    parsed = parse_inbound_envelope(payload)
+    # P0-07: the startup-validated key is threaded into parse_inbound_envelope
+    # — the redaction path no longer reads os.environ per message.
+    parsed = parse_inbound_envelope(payload, hmac_key="test-redaction-key")
     assert len(parsed) == 1
     msg, window_key = parsed[0]
     assert msg.text == "parsed body"
@@ -250,7 +252,7 @@ def test_inbound_message_repr_does_not_leak_raw_digits(monkeypatch):
     """M1 regression: ``repr(InboundMessage)`` MUST NOT contain the raw E.164."""
     monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
     payload = json.loads(_inbound_payload(text="body").decode())
-    parsed = parse_inbound_envelope(payload)
+    parsed = parse_inbound_envelope(payload, hmac_key="test-redaction-key")
     msg, _ = parsed[0]
     rendered = repr(msg)
     assert (
@@ -261,4 +263,4 @@ def test_inbound_message_repr_does_not_leak_raw_digits(monkeypatch):
 def test_parse_envelope_ignores_statuses_only_payload(monkeypatch):
     monkeypatch.setenv(PII_HMAC_KEY_ENV, "test-redaction-key")
     payload = {"entry": [{"changes": [{"value": {"statuses": [{"id": "x"}]}}]}]}
-    assert parse_inbound_envelope(payload) == []
+    assert parse_inbound_envelope(payload, hmac_key="test-redaction-key") == []
