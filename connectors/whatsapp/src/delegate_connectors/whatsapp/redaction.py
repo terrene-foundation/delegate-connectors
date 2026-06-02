@@ -19,16 +19,34 @@ runtime-soft — and the connector MUST honor both halves:
    load-bearing status (every audit/log line depends on it). Missing or empty
    raises :class:`RedactionConfigError`.
 2. **Per-message redaction (FAIL-SOFT, returns sentinel):** :func:`redact_phone`
-   preserves its current contract: ANY runtime failure — missing key,
+   preserves its current contract: ANY runtime failure — absent key,
    un-normalizable input — returns the grep-able sentinel
    :data:`REDACTION_SENTINEL` rather than raising or leaking the raw number.
-   This is single-rotation-glitch robustness: a transient unset key at one
+   This is single-rotation-glitch robustness: a transient absent key at one
    call site MUST NOT crash the connector or surface the raw PII in an error
    message. The startup gate above prevents the *systematic* missing-key case;
    the sentinel handles the *transient* one.
 
+Credential-blindness fix (P0-07): the key is THREADED, not re-read per message
+==============================================================================
+:func:`redact_phone` takes the HMAC key as an explicit ``hmac_key`` argument
+sourced from the STARTUP-validated :class:`RedactionConfig`. It no longer reads
+``os.environ`` on every call — the previous per-message ``os.environ.get`` was
+both a per-message credential read AND a second source-of-truth that could
+diverge from the startup-validated key. Each call site (the connector's
+audit-payload redaction, the Cloud API log redaction, the inbound webhook
+parse) threads the key it validated once at startup. The fail-soft half is
+preserved structurally: an absent/empty ``hmac_key`` yields the sentinel — the
+transient-glitch path — without any environment access.
+
+The host's credential broker (``delegate_connectors_host.credential_broker``)
+will, in P0-11, mint this key via ``mint_secret('whatsapp_pii_hmac_key')`` and
+feed it to :meth:`RedactionConfig` — at which point even the startup
+``RedactionConfig.from_env`` env read moves host-side. This shard removes ONLY
+the per-message read; the startup ``from_env`` stays here until P0-11 wires it.
+
 :func:`redact_phone` is deterministic + key-stable within a process: the same
-raw number yields the same token, keyed by ``WHATSAPP_PII_HMAC_KEY`` (env-only).
+raw number under the same threaded ``hmac_key`` yields the same token.
 
 :func:`normalize_e164` is the shared normalization routine reused by the
 principal directory (todo 04) and the future Cloud API send (todo 03), so the
@@ -129,6 +147,11 @@ class RedactionConfig:
     (todo 07) MUST invoke so an installation with no ``WHATSAPP_PII_HMAC_KEY``
     set REFUSES to start. The runtime half — :func:`redact_phone` returning
     the sentinel on per-message failure — is preserved unchanged.
+
+    The connector holds this config from startup and THREADS :attr:`hmac_key`
+    into every :func:`redact_phone` call (directly or via :meth:`redact`) so the
+    per-message path never re-reads ``os.environ`` (P0-07 credential-blindness
+    fix). :meth:`redact` is the convenience wrapper that binds the validated key.
     """
 
     hmac_key: str
@@ -140,38 +163,53 @@ class RedactionConfig:
         Raises :class:`RedactionConfigError` when ``WHATSAPP_PII_HMAC_KEY`` is
         unset OR empty. Symmetric with
         :meth:`delegate_connectors.whatsapp.webhook.WebhookConfig.from_env`.
+
+        This is the ONLY remaining env read for the PII key; the per-message
+        path takes the validated key as an argument. In P0-11 the host's
+        credential broker mints the key (``mint_secret('whatsapp_pii_hmac_key')``)
+        and this ``from_env`` is replaced by an injected ``RedactionConfig``.
         """
         return cls(hmac_key=_require_env(PII_HMAC_KEY_ENV))
 
+    def redact(self, raw: str) -> str:
+        """Redact ``raw`` using this config's STARTUP-validated key.
 
-def _hmac_key() -> bytes:
-    """Read the redaction key from the environment.
-
-    Raises :class:`KeyError` when absent; the redaction path catches it and
-    returns the sentinel rather than a raw fallback (the runtime-soft half of
-    the dual contract — startup-loud is :meth:`RedactionConfig.from_env`).
-    """
-    key = os.environ.get(PII_HMAC_KEY_ENV)
-    if not key:
-        raise KeyError(f"{PII_HMAC_KEY_ENV} is not set in the environment")
-    return key.encode("utf-8")
+        Convenience wrapper binding :attr:`hmac_key` so call sites that hold a
+        :class:`RedactionConfig` (the connector, the Cloud API transport, the
+        webhook ingest) redact without re-reading the environment.
+        """
+        return redact_phone(raw, hmac_key=self.hmac_key)
 
 
-def redact_phone(raw: str) -> str:
+def redact_phone(raw: str, *, hmac_key: str | None) -> str:
     """Redact a phone number / ``wa_id`` to a stable ``wa:<first-8-hex>`` token.
 
     Deterministic and key-stable within a process: the same ``raw`` input yields
-    the same token under a fixed ``WHATSAPP_PII_HMAC_KEY``; a different key yields
-    a different token. On ANY failure (missing key, un-normalizable input) returns
+    the same token under a fixed ``hmac_key``; a different key yields a different
+    token. The ``hmac_key`` is the STARTUP-validated key threaded from a
+    :class:`RedactionConfig` — this function NEVER reads ``os.environ`` (the
+    P0-07 credential-blindness fix: no per-message credential read, no second
+    source-of-truth that could diverge from the startup-validated key).
+
+    On ANY failure (absent/empty ``hmac_key``, un-normalizable input) returns
     :data:`REDACTION_SENTINEL` — NEVER the raw number, NEVER an exception that
-    leaks the raw value.
+    leaks the raw value. The absent-key path IS the runtime-soft half of the
+    dual contract: a transient missing key at one call site collapses to the
+    grep-able sentinel rather than crashing the connector or leaking PII.
     """
+    if not hmac_key:
+        # Runtime-soft half of the dual contract: an absent/empty key at the
+        # per-message call site yields the sentinel — never the raw value,
+        # never an environment read. The startup gate
+        # (RedactionConfig.from_env) prevents the SYSTEMATIC missing-key case.
+        return REDACTION_SENTINEL
     try:
         normalized = normalize_e164(raw)
-        key = _hmac_key()
-    except (TypeError, ValueError, KeyError):
-        # Any failure path collapses to the grep-able sentinel. The raw value is
-        # never returned and never re-raised in a leaking message.
+    except (TypeError, ValueError):
+        # Un-normalizable input collapses to the grep-able sentinel. The raw
+        # value is never returned and never re-raised in a leaking message.
         return REDACTION_SENTINEL
-    digest = hmac.new(key, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+    digest = hmac.new(
+        hmac_key.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
     return f"wa:{digest[:8]}"

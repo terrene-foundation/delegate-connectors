@@ -222,8 +222,10 @@ class WhatsAppConnector(Connector):
         # construct if WHATSAPP_PII_HMAC_KEY is unset / empty. The runtime
         # `redact_phone` path stays fail-soft (sentinel); this gate closes
         # the systematic missing-key case where every audit row would carry
-        # the sentinel silently.
-        RedactionConfig.from_env()
+        # the sentinel silently. The validated config is RETAINED and threaded
+        # into the per-message audit-payload redaction so that path never
+        # re-reads os.environ (P0-07 credential-blindness fix).
+        self._redaction_config = RedactionConfig.from_env()
 
         self._cloud_api = cloud_api
         self._ingest = ingest
@@ -315,8 +317,9 @@ class WhatsAppConnector(Connector):
         payload = _as_payload(result_obj)
         # Audit-payload PII redaction: rewrite any ``wa_id`` / ``to`` field
         # to its redacted token BEFORE the canonical bytes are built. This
-        # is the binding floor — the audit payload NEVER carries raw PII.
-        payload = _redact_payload(payload)
+        # is the binding floor — the audit payload NEVER carries raw PII. The
+        # STARTUP-validated key is threaded in (never an os.environ read).
+        payload = _redact_payload(payload, hmac_key=self._redaction_config.hmac_key)
         signer_delegate_id = str(identity.delegate_id)
         action_id = uuid.uuid4()
         observed_at = datetime.now(timezone.utc)
@@ -469,18 +472,20 @@ class WhatsAppConnector(Connector):
 _PII_PAYLOAD_KEYS = frozenset({"to", "wa_id", "from", "recipient", "phone"})
 
 
-def _redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _redact_payload(payload: dict[str, Any], *, hmac_key: str) -> dict[str, Any]:
     """Rewrite PII-bearing fields to their redacted token.
 
     Walks the top-level payload keys; any key in :data:`_PII_PAYLOAD_KEYS`
-    with a string value is rewritten to ``redact_phone(value)`` (a
-    ``wa:<8-hex>`` token, or the grep-able sentinel on a redaction failure).
-    Non-string values are left as-is — they cannot carry a raw E.164.
+    with a string value is rewritten to ``redact_phone(value, hmac_key=...)``
+    (a ``wa:<8-hex>`` token, or the grep-able sentinel on a redaction failure)
+    under the STARTUP-validated ``hmac_key`` threaded in by the caller — never
+    an ``os.environ`` read. Non-string values are left as-is — they cannot
+    carry a raw E.164.
     """
     out: dict[str, Any] = {}
     for key, value in payload.items():
         if key in _PII_PAYLOAD_KEYS and isinstance(value, str) and value:
-            out[key] = redact_phone(value)
+            out[key] = redact_phone(value, hmac_key=hmac_key)
         else:
             out[key] = value
     return out

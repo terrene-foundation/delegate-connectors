@@ -34,7 +34,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from delegate_connectors.whatsapp.redaction import redact_phone
+from delegate_connectors.whatsapp.redaction import RedactionConfig, redact_phone
 
 logger = logging.getLogger(__name__)
 
@@ -152,17 +152,20 @@ def verify_signature(
     return hmac.compare_digest(provided, expected)
 
 
-def parse_inbound_envelope(payload: dict) -> list[tuple[InboundMessage, str]]:
+def parse_inbound_envelope(
+    payload: dict, *, hmac_key: str
+) -> list[tuple[InboundMessage, str]]:
     """Parse a verified webhook payload into ``(message, window_key)`` tuples.
 
     Walks ``entry[].changes[].value.messages[]``. The sender ``wa_id`` (or
-    ``from``) is PII-redacted before it enters any returned :class:`InboundMessage`.
-    The second tuple element is the bare-digit normalized form used by the
-    window-tracker callback (an empty string when normalization fails) — it is
-    deliberately NOT stored on the message itself, so the in-process buffer
-    carries ONLY the redacted token (closes M1 from the wave-1 security review).
-    Malformed or statuses-only payloads yield an empty list — never an exception
-    that would surface a raw number.
+    ``from``) is PII-redacted (under the STARTUP-validated ``hmac_key`` threaded
+    in by the caller — never an ``os.environ`` read) before it enters any
+    returned :class:`InboundMessage`. The second tuple element is the bare-digit
+    normalized form used by the window-tracker callback (an empty string when
+    normalization fails) — it is deliberately NOT stored on the message itself,
+    so the in-process buffer carries ONLY the redacted token (closes M1 from the
+    wave-1 security review). Malformed or statuses-only payloads yield an empty
+    list — never an exception that would surface a raw number.
     """
     results: list[tuple[InboundMessage, str]] = []
     for entry in payload.get("entry", []) or []:
@@ -175,7 +178,7 @@ def parse_inbound_envelope(payload: dict) -> list[tuple[InboundMessage, str]]:
                 if msg_type == "text":
                     text = (msg.get("text") or {}).get("body", "")
                 message = InboundMessage(
-                    sender_redacted=redact_phone(raw_sender),
+                    sender_redacted=redact_phone(raw_sender, hmac_key=hmac_key),
                     message_type=msg_type,
                     text=text,
                     timestamp=str(msg.get("timestamp", "")),
@@ -215,6 +218,7 @@ class WebhookIngest:
         *,
         window_sink: Callable[[str, str], None] | None = None,
         max_buffered: int = DEFAULT_MAX_BUFFERED,
+        redaction_config: RedactionConfig | None = None,
     ) -> None:
         if not isinstance(
             config, WebhookConfig
@@ -228,6 +232,17 @@ class WebhookIngest:
             )
         self._config = config
         self._max_buffered = max_buffered
+        # The STARTUP-validated redaction config carrying the PII-HMAC key. It is
+        # threaded into parse_inbound_envelope on every ingest so the inbound
+        # redaction path NEVER re-reads os.environ (P0-07). When omitted the
+        # ingest resolves it once from the environment HERE (the same
+        # startup-loud RedactionConfig.from_env gate, run once at construction
+        # rather than per message).
+        self._redaction_config: RedactionConfig = (
+            redaction_config
+            if redaction_config is not None
+            else RedactionConfig.from_env()
+        )
         # Bounded FIFO: a deque(maxlen) evicts the oldest on overflow rather
         # than growing without limit. drain_one popleft()s the oldest.
         self._buffer: deque[InboundMessage] = deque(maxlen=max_buffered)
@@ -241,11 +256,13 @@ class WebhookIngest:
         *,
         window_sink: Callable[[str, str], None] | None = None,
         max_buffered: int = DEFAULT_MAX_BUFFERED,
+        redaction_config: RedactionConfig | None = None,
     ) -> "WebhookIngest":
         return cls(
             WebhookConfig.from_env(),
             window_sink=window_sink,
             max_buffered=max_buffered,
+            redaction_config=redaction_config,
         )
 
     @property
@@ -276,7 +293,9 @@ class WebhookIngest:
         except (UnicodeDecodeError, json.JSONDecodeError):
             logger.warning("whatsapp.webhook.payload_unparseable")
             return 0
-        parsed = parse_inbound_envelope(payload)
+        parsed = parse_inbound_envelope(
+            payload, hmac_key=self._redaction_config.hmac_key
+        )
         for message, window_key in parsed:
             if len(self._buffer) >= self._max_buffered:
                 # deque(maxlen) will evict the oldest verified message on this

@@ -20,6 +20,7 @@ import json
 
 import pytest
 
+from delegate_connectors.whatsapp.redaction import RedactionConfig
 from delegate_connectors.whatsapp.webhook import (
     WebhookConfig,
     WebhookIngest,
@@ -31,10 +32,18 @@ pytestmark = pytest.mark.regression
 
 _APP_SECRET = "test-app-secret-not-a-real-secret"
 _VERIFY_TOKEN = "test-verify-token"
+# P0-07: the ingest threads a STARTUP-validated PII-HMAC key into the inbound
+# redaction path. Inject it explicitly so the test is self-contained (no
+# os.environ dependency) and exercises the threaded-key path.
+_REDACTION = RedactionConfig(hmac_key="test-pii-hmac-key-min-len")
 
 
 def _config() -> WebhookConfig:
     return WebhookConfig(app_secret=_APP_SECRET, verify_token=_VERIFY_TOKEN)
+
+
+def _ingest() -> WebhookIngest:
+    return WebhookIngest(_config(), redaction_config=_REDACTION)
 
 
 def _valid_payload() -> bytes:
@@ -70,7 +79,7 @@ def _sign(raw_body: bytes, secret: str = _APP_SECRET) -> str:
 
 def test_tampered_signature_refused_buffer_untouched_no_audit(caplog):
     """A tampered signature: refused, buffer unchanged, no ingest.ok audit line."""
-    ingest = WebhookIngest(_config())
+    ingest = _ingest()
     raw = _valid_payload()
     # A valid signature over a DIFFERENT body — i.e. the body was tampered after
     # signing (or the signature does not match these bytes).
@@ -90,7 +99,7 @@ def test_tampered_signature_refused_buffer_untouched_no_audit(caplog):
 
 def test_missing_signature_refused(caplog):
     """A None / absent signature header is refused — never reaches the buffer."""
-    ingest = WebhookIngest(_config())
+    ingest = _ingest()
     raw = _valid_payload()
 
     with caplog.at_level("INFO"):
@@ -108,7 +117,7 @@ def test_wrong_secret_signature_refused():
 
 def test_valid_signature_accepted_and_buffered(caplog):
     """A correctly-signed payload over the EXACT bytes verifies + buffers."""
-    ingest = WebhookIngest(_config())
+    ingest = _ingest()
     raw = _valid_payload()
     good_sig = _sign(raw)
 

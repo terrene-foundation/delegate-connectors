@@ -27,6 +27,14 @@ Submodules (populated by the Phase-0 wave shards):
 """
 
 from delegate_connectors_host.bound_transport import BoundTransport, bind_transport
+from delegate_connectors_host.credential_broker import (
+    CredentialBroker,
+    CredentialBrokerError,
+    MissingCredentialError,
+    ScopedBroker,
+    UngrantedCredentialError,
+    UnknownCredentialClassError,
+)
 from delegate_connectors_host.ledger import DurableKnowledgeLedger
 from delegate_connectors_host.revocation import (
     ProductionRevocationChannel,
@@ -39,6 +47,12 @@ __version__ = "0.1.0"
 __all__ = [
     "BoundTransport",
     "bind_transport",
+    "CredentialBroker",
+    "ScopedBroker",
+    "CredentialBrokerError",
+    "MissingCredentialError",
+    "UnknownCredentialClassError",
+    "UngrantedCredentialError",
     "DurableKnowledgeLedger",
     "ProductionRevocationChannel",
     "StaticSignedDenylist",

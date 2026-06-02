@@ -45,8 +45,8 @@ import httpx
 
 from delegate_connectors.whatsapp.redaction import (
     REDACTION_SENTINEL,
+    RedactionConfig,
     normalize_e164,
-    redact_phone,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,6 +276,7 @@ class WhatsAppCloudApi:
         config: WhatsAppCloudConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        redaction_config: RedactionConfig | None = None,
     ) -> None:
         if not isinstance(
             config, WhatsAppCloudConfig
@@ -293,6 +294,16 @@ class WhatsAppCloudApi:
             )
         self._config = config
         self._injected_client = client
+        # The STARTUP-validated redaction config carrying the PII-HMAC key,
+        # threaded into the log-line redaction so `send` NEVER re-reads
+        # os.environ per message (P0-07). When omitted the transport resolves
+        # it once from the environment HERE (startup-loud, run once at
+        # construction rather than per send).
+        self._redaction_config = (
+            redaction_config
+            if redaction_config is not None
+            else RedactionConfig.from_env()
+        )
 
     @classmethod
     def from_env(cls) -> "WhatsAppCloudApi":
@@ -443,7 +454,7 @@ class WhatsAppCloudApi:
         # in a log record on the happy path — the only place the raw bytes
         # live is in the request body about to transit HTTPS, dropped after
         # the send completes.
-        redacted_to = redact_phone(message.to)
+        redacted_to = self._redaction_config.redact(message.to)
         logger.info(
             "whatsapp.cloud_api.messages.start",
             extra={"to_redacted": redacted_to},
@@ -489,7 +500,7 @@ class WhatsAppCloudApi:
             extra={
                 "wamid": wamid,
                 "wa_id_redacted": (
-                    redact_phone(resolved_wa_id)
+                    self._redaction_config.redact(resolved_wa_id)
                     if resolved_wa_id
                     else REDACTION_SENTINEL
                 ),
