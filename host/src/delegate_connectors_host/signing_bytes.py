@@ -130,7 +130,7 @@ def verify_read_receipt(
         manifest,
         attester_delegate_id=receipt.attester_delegate_id,
         read_id=str(receipt.read_id),
-        observed_at=receipt.observed_at.isoformat(),
+        observed_at=receipt.observed_at.isoformat(timespec="microseconds"),
     )
     if expected != receipt.canonical_bytes:
         return False
