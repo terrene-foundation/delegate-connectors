@@ -22,11 +22,14 @@ identical to the per-connector copies they replace.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from kailash.delegate.dispatch import AttestedReadReceipt, SignedActionEnvelope
 from kailash.delegate.verifier import Ed25519Verifier
 from kailash.trust._json import canonical_json_dumps
+
+from delegate_connectors_host.canonical_domain import assert_canonical_signing_domain
 
 __all__ = [
     "build_action_signing_bytes",
@@ -50,7 +53,18 @@ def build_action_signing_bytes(
     signed bytes (distinct ``action_id`` + ``observed_at``) and the signer /
     action id / observation time are cryptographically bound — closing the
     replay/forge surface where same-payload receipts were byte-identical.
+
+    Rejects (``NonConformantPayloadError``) a ``payload`` carrying a value the
+    frozen v1 wire form cannot represent interoperably — a float / NaN / Infinity,
+    an integer outside ``[-(2^53-1), 2^53-1]``, a non-string object key, or a lone
+    surrogate — BEFORE signing, per ``specs/canonical-signing-bytes.md`` §1.2–§1.5
+    + §5 (the producer-side reject suite enforced at the connector boundary §1.4).
     """
+    # Snapshot once, then validate + encode the SAME snapshot: the bytes we sign
+    # are provably the bytes we validated (no validate-then-encode window where a
+    # shared mutable nested container could change between the two reads).
+    payload = deepcopy(payload)
+    assert_canonical_signing_domain(payload)
     return canonical_json_dumps(
         {
             "payload": payload,
@@ -73,7 +87,16 @@ def build_read_signing_bytes(
     Signs over ``{manifest, attester_delegate_id, read_id, observed_at}`` (not the
     bare ``manifest``), so the attester / read id / observation time are bound
     into the attestation.
+
+    Rejects (``NonConformantPayloadError``) a ``manifest`` carrying a value the
+    frozen v1 wire form cannot represent interoperably (float / NaN / Infinity,
+    out-of-range integer, non-string object key, lone surrogate) BEFORE signing,
+    per ``specs/canonical-signing-bytes.md`` §1.2–§1.5 + §5.
     """
+    # Snapshot once, then validate + encode the SAME snapshot (see
+    # build_action_signing_bytes for the validate-then-encode rationale).
+    manifest = deepcopy(manifest)
+    assert_canonical_signing_domain(manifest)
     return canonical_json_dumps(
         {
             "manifest": manifest,

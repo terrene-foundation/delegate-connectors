@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from delegate_connectors_host.canonical_domain import NonConformantPayloadError
 from delegate_connectors_host.signing_bytes import (
     build_action_signing_bytes,
     build_read_signing_bytes,
@@ -134,3 +135,48 @@ def test_action_bytes_carry_fixed_width_microseconds_end_to_end():
         observed_at=observed_at,
     )
     assert b'"observed_at":"2026-06-01T12:00:00.000000+00:00"' in out
+
+
+# --- §5 reject suite: the SECOND conformance gate (producer MUST raise) --------
+#
+# spec §5: "An implementation claiming interoperability MUST pass BOTH [accept]
+# gates ... Plus the reject suite — the canonicalizer/verifier MUST reject (raise,
+# never sign/accept): a float; a NaN/Infinity; an integer outside [-(2^53-1),
+# 2^53-1]; a non-string object key; a string with a lone surrogate ..."
+# The §6 reject cases assert REJECTION (no bytes). These exercise the producer
+# (signer) half through the shared signing-byte helpers — the boundary §1.4 names.
+
+_REJECT_PAYLOADS = {
+    "float-1.5": {"v": 1.5},
+    "nan": {"v": float("nan")},
+    "infinity": {"v": float("inf")},
+    "neg-infinity": {"v": float("-inf")},
+    "int-2pow53-first-js-unsafe": {"v": 2**53},  # 9007199254740992
+    "int-2pow64": {"v": 2**64},
+    "non-string-key": {1: "a"},
+    "lone-surrogate": {"k": "a\ud83db"},
+}
+
+
+@pytest.mark.parametrize("name", sorted(_REJECT_PAYLOADS))
+def test_action_signing_rejects_spec_reject_suite(name):
+    """§5 reject suite — the action signer MUST raise, never emit signable bytes."""
+    with pytest.raises(NonConformantPayloadError):
+        build_action_signing_bytes(
+            _REJECT_PAYLOADS[name],
+            signer_delegate_id=_SIGNER,
+            action_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+            observed_at="2026-06-01T12:00:00.000000+00:00",
+        )
+
+
+@pytest.mark.parametrize("name", sorted(_REJECT_PAYLOADS))
+def test_read_signing_rejects_spec_reject_suite(name):
+    """§5 reject suite — the read attester MUST raise, never emit signable bytes."""
+    with pytest.raises(NonConformantPayloadError):
+        build_read_signing_bytes(
+            _REJECT_PAYLOADS[name],
+            attester_delegate_id=_ATTESTER,
+            read_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+            observed_at="2026-06-01T12:00:00.000000+00:00",
+        )

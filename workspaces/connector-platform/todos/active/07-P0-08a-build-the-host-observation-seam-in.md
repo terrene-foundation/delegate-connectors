@@ -1,6 +1,17 @@
 # P0-08a — Build the host-observation seam in DispatchSurface (host invokes the brokered side effect, derives canonical bytes, refuses unobserved)
 
-> **Milestone:** P0 — Decoupling foundation  ·  **Load-bearing:** YES  ·  **Wire todo:** no  ·  **Est:** ~180 LOC
+> **STATUS: IMPLEMENTED 2026-06-02** (branch `feat/p0-wave3-host-observation-seam`, PR pending).
+> Built `delegate_connectors_host/dispatch_observation.py` (seam) as a standalone transitional
+> orphan (no connector wiring — that is P0-09/P0-11; no signing — that is P0-08b). Adversarial
+> review (workflow `wf_0dd3f5d9-ac3`, 4 lenses) surfaced that the canonical-bytes producer
+> enforced NONE of the frozen spec §5 reject suite (NaN/Infinity/float/≥2^53-int/non-string-key
+> silently produced "signable" bytes that verify nowhere); closed in-shard at the producer
+> chokepoint via new `canonical_domain.py` wired into `build_*_signing_bytes` (zero spine edits).
+> 593 tests pass (host 148 incl. §5 reject suite; 4 connector suites green). Journal: 0004.
+> Open upstream (needs human gate): `kailash.trust._json.canonical_json_dumps` lacks
+> `allow_nan=False` for other ecosystem consumers — recommend filing against kailash-py.
+
+> **Milestone:** P0 — Decoupling foundation · **Load-bearing:** YES · **Wire todo:** no · **Est:** ~180 LOC
 > **Depends on:** P0-04, P0-05, P0-06, P0-07
 > **Implements:** architecture §3.5 layer 2 (b); architecture §2 (unforgeability false); specs host_signing_constraints; specs/canonical-signing-bytes.md §3; protocol-spec §2 (receipt vs audit-event pre-image); value-prioritization MUST-1
 
@@ -31,9 +42,9 @@ Architecture §3.5 layer 2 (b): handing the connector a signer thunk is a FORGE 
 
 ## Acceptance criteria
 
-- [ ] the host invokes and observes the brokered side effect; canonical bytes are derived only from the host-observed return
-- [ ] the host refuses to derive bytes for any unobserved or connector-fabricated side effect
-- [ ] the receipt pre-image is distinct from the spine audit signer pre-image; zero kailash spine edits
+- [x] the host invokes and observes the brokered side effect; canonical bytes are derived only from the host-observed return
+- [x] the host refuses to derive bytes for any unobserved or connector-fabricated side effect
+- [x] the receipt pre-image is distinct from the spine audit signer pre-image; zero kailash spine edits
 
 ## Test plan
 
