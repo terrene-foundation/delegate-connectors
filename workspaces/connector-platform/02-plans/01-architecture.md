@@ -97,10 +97,13 @@ Most connectors are HTTP/REST APIs. A connector becomes a **signed YAML manifest
 For the exotic ~20% (SMTP/IMAP, triggers, stateful, non-REST), a connector is a wheel subclassing the `Connector` ABC (the 7 members) via a single versioned factory:
 
 ```python
-delegate.connector_builder(connector, *, signer_callback=...) -> ComposedRuntime
+delegate.connector_builder(build_connector, *, signature, tenant_id=..., signing_key=None) -> ComposedRuntime
+# build_connector: (verifier, tenant_id) -> Connector
 ```
 
-The factory absorbs the ~250-LOC compose ceremony every connector hand-copies today (246 LOC email / 286 LOC whatsapp), and reads a `delegate_host_protocol` integer the connector declares — refusing unsupported ranges with a **loud load-time error** (Terraform's `protocol_versions` 5.0/6.0 model). This converts ~20 unversioned spine couplings into **one** versioned contract, so a spine change is a coordinated migration, not a silent thousands-wide break.
+> **Contract note (P0-10a, owner-confirmed 2026-06-03).** The factory takes a connector-**build thunk**, not a finished connector instance (the original `connector_builder(connector, *, signer_callback=...)` form proposed here on 2026-06-01 predated the P0-08b host-side signer). The host MUST own the key→directory→verifier provenance: for a host-signed receipt to verify, the host key's public half must be the one in the verifier's directory, and that directory must be the verifier the connector authenticates against. A factory that took a finished connector would force the connector to build its own verifier and hold its own key — the **forge oracle** §3.5 layer 2(b) closes. So the factory mints the trust core first (`signing_key → PrincipalDirectory → AuthVerifier → seam → HostSigner`), then calls `build_connector(verifier, tenant_id)` to construct the connector around the host-owned verifier, and asserts `connector.auth_verifier is verifier`. The `signer_callback` parameter is dropped: signing is owned by the host `HostSigner` (connector-receipt path) plus the SDK audit-slot signer, both host-key-derived; the connector receives neither.
+
+The factory absorbs the ~250-LOC compose ceremony every connector hand-copies today (246 LOC email / 286 LOC whatsapp), and reads a `delegate_host_protocol` integer the connector declares — refusing unsupported ranges with a **loud load-time error** (Terraform's `protocol_versions` 5.0/6.0 model). This converts ~20 unversioned spine couplings into **one** versioned contract, so a spine change is a coordinated migration, not a silent thousands-wide break. (The `delegate_host_protocol` negotiation is P0-10b; P0-10a delivers the ceremony + host-signer wiring + the canonical `AuthVerifier` pin.)
 
 ### 3.4 Registry — one signed catalog, generated not curated
 
