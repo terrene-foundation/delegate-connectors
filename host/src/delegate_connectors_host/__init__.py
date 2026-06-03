@@ -26,6 +26,7 @@ Submodules (populated by the Phase-0 wave shards):
 - ``bound_transport`` — the opaque non-introspectable ``BoundTransport`` (P0-06)
 - ``credential_broker`` — the host-side credential broker (P0-07)
 - ``dispatch_observation`` — the host-observation seam, closes the forge oracle (P0-08a)
+- ``dispatch_signing`` — the host-side Ed25519 signer over the seam (P0-08b)
 """
 
 from delegate_connectors_host.bound_transport import BoundTransport, bind_transport
@@ -47,6 +48,7 @@ from delegate_connectors_host.dispatch_observation import (
     Summarize,
     UnobservedSideEffectError,
 )
+from delegate_connectors_host.dispatch_signing import HostSigner
 from delegate_connectors_host.ledger import DurableKnowledgeLedger
 from delegate_connectors_host.revocation import (
     ProductionRevocationChannel,
@@ -73,6 +75,7 @@ __all__ = [
     "ObservedSideEffect",
     "Summarize",
     "UnobservedSideEffectError",
+    "HostSigner",
     "NonConformantPayloadError",
     "assert_canonical_signing_domain",
 ]
