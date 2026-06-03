@@ -1,6 +1,15 @@
 # P0-08b — Relocate the Ed25519 key host-side and sign over the P0-08a observation seam (connector holds neither key nor thunk)
 
-> **Milestone:** P0 — Decoupling foundation  ·  **Load-bearing:** YES  ·  **Wire todo:** no  ·  **Est:** ~140 LOC
+> **STATUS: IMPLEMENTED 2026-06-03** (branch `feat/p0-wave4-host-side-signer`, PR pending).
+> Built `delegate_connectors_host/dispatch_signing.py::HostSigner(seam, signing_key)` as a
+> standalone transitional orphan (no connector wiring — that is P0-09/P0-11). `sign_action` /
+> `attest_read` route through the seam's refuse-on-unobserved gate; no `sign(bytes)` surface,
+> no key accessor. Receipts verify under the SDK `Ed25519Verifier` (raw-64B sig, µs observed_at).
+> Built against the RUNTIME kailash 2.28.1 dispatch shapes (loom source was ahead:
+> `SignedActionEnvelope.observed_at` exists in source but NOT in 2.28.1). 159 host tests pass
+> (+11). Journal: 0005. Next: P0-10a (factory wires broker + seam + signer).
+
+> **Milestone:** P0 — Decoupling foundation · **Load-bearing:** YES · **Wire todo:** no · **Est:** ~140 LOC
 > **Depends on:** P0-08a
 > **Implements:** architecture §3.5 layer 2 (b); architecture §2 (unforgeability false); specs host_signing_constraints; specs/canonical-signing-bytes.md §4; value-prioritization MUST-1
 
@@ -16,7 +25,7 @@ A host-side signer in/around DispatchSurface that signs the P0-08a-derived canon
 
 - delegate_connectors_host/dispatch_signing.py (new — host-side signer over the P0-08a seam)
 - delegate_connectors_host/connector_builder.py (factory wires the host signer — see P0-10a)
-- connectors/email/src/delegate_connectors/email/connector.py:291-293 (the _sign path the refactor replaces — connector loses raw key, see P0-09)
+- connectors/email/src/delegate_connectors/email/connector.py:291-293 (the \_sign path the refactor replaces — connector loses raw key, see P0-09)
 
 ## Invariants (MUST hold)
 
@@ -31,9 +40,9 @@ Architecture §3.5 layer 2 (b): signing MUST move host-side. §2 lists unforgeab
 
 ## Acceptance criteria
 
-- [ ] signing happens host-side; the connector holds neither key nor thunk
-- [ ] the host signs only P0-08a-derived bytes (no arbitrary-bytes signing path)
-- [ ] produced receipts verify under Ed25519Verifier with raw-64B sig + microsecond observed_at
+- [x] signing happens host-side; the connector holds neither key nor thunk
+- [x] the host signs only P0-08a-derived bytes (no arbitrary-bytes signing path)
+- [x] produced receipts verify under Ed25519Verifier with raw-64B sig + microsecond observed_at
 
 ## Test plan
 
