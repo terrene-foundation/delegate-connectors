@@ -49,6 +49,12 @@ from delegate_connectors_host.dispatch_observation import (
     UnobservedSideEffectError,
 )
 from delegate_connectors_host.dispatch_signing import HostSigner
+from delegate_connectors_host.connector_builder import (
+    BuildConnector,
+    ComposedRuntime,
+    connector_builder,
+)
+from delegate_connectors_host.trust_primitives import AuthVerifier
 from delegate_connectors_host.ledger import DurableKnowledgeLedger
 from delegate_connectors_host.revocation import (
     ProductionRevocationChannel,
@@ -76,6 +82,10 @@ __all__ = [
     "Summarize",
     "UnobservedSideEffectError",
     "HostSigner",
+    "AuthVerifier",
+    "BuildConnector",
+    "ComposedRuntime",
+    "connector_builder",
     "NonConformantPayloadError",
     "assert_canonical_signing_domain",
 ]
