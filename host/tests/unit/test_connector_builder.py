@@ -48,7 +48,9 @@ from kailash.delegate.types import DelegateIdentity
 from kailash.delegate.verifier import Ed25519Verifier
 
 from delegate_connectors_host.connector_builder import (
+    HOST_SUPPORTED_PROTOCOLS,
     ComposedRuntime,
+    ProtocolUnsupportedError,
     connector_builder,
 )
 from delegate_connectors_host.dispatch_signing import HostSigner
@@ -241,3 +243,170 @@ def test_rejects_connector_with_parallel_verifier():
 
     with pytest.raises(ValueError, match="host-owned verifier"):
         connector_builder(_build_parallel_verifier, signature=_StubSignature())
+
+
+# ── host-protocol negotiation gate (P0-10b) ───────────────────────────────────
+
+
+def _connector_at(protocol):
+    """A build-thunk for a stub connector declaring ``delegate_host_protocol``.
+
+    ``protocol=None`` declares NOTHING (exercises the default).
+    """
+
+    class _ProtoConnector(_StubConnector):
+        if protocol is not None:
+            delegate_host_protocol = protocol
+
+    return lambda verifier, tenant_id: _ProtoConnector(verifier)
+
+
+def test_default_non_declaring_connector_binds_at_v1():
+    # The four v0 connectors declare no delegate_host_protocol -> default {1}.
+    composed = connector_builder(_build_stub, signature=_StubSignature())
+    assert composed.bound_protocol == 1
+
+
+def test_declared_int_in_host_set_loads_and_binds():
+    composed = connector_builder(_connector_at(1), signature=_StubSignature())
+    assert composed.bound_protocol == 1
+
+
+def test_declared_range_overlapping_binds_at_max_of_intersection():
+    # Connector speaks {1,2}; host speaks {1}; S ∩ H = {1}; bind at max = 1.
+    composed = connector_builder(_connector_at([1, 2]), signature=_StubSignature())
+    assert composed.bound_protocol == 1
+    assert composed.bound_protocol == max({1, 2} & HOST_SUPPORTED_PROTOCOLS)
+
+
+def test_disjoint_int_refuses_loudly_with_portable_kind():
+    # Connector requires v2; host only speaks v1; S ∩ H = ∅ -> loud load-time refusal.
+    with pytest.raises(ProtocolUnsupportedError) as exc:
+        connector_builder(_connector_at(2), signature=_StubSignature())
+    err = exc.value
+    # Portable, language-neutral identity — NOT the Python class name (§9).
+    assert err.kind == "protocol.unsupported"
+    # Message names connector kind + connector's declared value + host's set (§8).
+    msg = str(err)
+    assert "stub" in msg  # connector kind
+    assert "delegate_host_protocol 2 " in msg  # connector's declared value
+    assert str(sorted(HOST_SUPPORTED_PROTOCOLS)) in msg  # host's set
+
+
+def test_disjoint_range_refuses_naming_declared_range_not_expanded():
+    with pytest.raises(ProtocolUnsupportedError) as exc:
+        connector_builder(_connector_at([2, 4]), signature=_StubSignature())
+    err = exc.value
+    assert err.kind == "protocol.unsupported"
+    # §8: name the connector's DECLARED RANGE — the compact "[2, 4]", NOT the
+    # expanded set "[2, 3, 4]" (which would also diverge from a Rust impl's form).
+    assert "[2, 4]" in str(err)
+    assert "[2, 3, 4]" not in str(err)
+
+
+def test_protocol_unsupported_is_a_valueerror():
+    # Subclasses ValueError so a generic load-error handler still catches it.
+    assert issubclass(ProtocolUnsupportedError, ValueError)
+
+
+def test_malformed_declaration_is_valueerror_not_protocol_unsupported():
+    # A malformed declaration is a connector bug, distinct from S ∩ H = ∅:
+    # it raises plain ValueError WITHOUT the protocol.unsupported kind.
+    for bad in ([3, 1], "1", {"min": 1}, [1, 2, 3], True, [1, True]):
+        with pytest.raises(ValueError) as exc:
+            connector_builder(_connector_at(bad), signature=_StubSignature())
+        assert not isinstance(exc.value, ProtocolUnsupportedError), bad
+
+
+def test_protocol_axis_independent_of_sdk_pin(monkeypatch):
+    # delegate_host_protocol is the cross-impl wire-contract axis; the kailash
+    # dependency pin is a DIFFERENT axis. Prove the gate's DECISION never reads
+    # the SDK version: monkeypatch kailash.__version__ to an arbitrary value and
+    # assert the negotiated bound_protocol is unchanged.
+    import kailash
+
+    baseline = connector_builder(_connector_at(1), signature=_StubSignature())
+    assert baseline.bound_protocol == 1
+
+    monkeypatch.setattr(kailash, "__version__", "999.999.999", raising=False)
+    after = connector_builder(_connector_at(1), signature=_StubSignature())
+    assert after.bound_protocol == 1  # decision invariant under SDK version change
+
+    # Structural backstop: the negotiation source never references the SDK version.
+    import importlib
+    import inspect
+
+    cb = importlib.import_module("delegate_connectors_host.connector_builder")
+    src = inspect.getsource(cb._negotiate_protocol) + inspect.getsource(
+        cb._declared_bounds
+    )
+    assert "__version__" not in src
+
+
+def test_max_binding_picks_highest_common_under_widened_host(monkeypatch):
+    # With H={1} today every S ∩ H is {1}, so "binds at MAX" is unprovable. Widen
+    # the host to {1,2,3} and prove the gate picks the HIGHEST common version
+    # (max), not the lowest — a min()-binding would fail these.
+    import importlib
+
+    cb = importlib.import_module("delegate_connectors_host.connector_builder")
+    monkeypatch.setattr(cb, "HOST_SUPPORTED_PROTOCOLS", frozenset({1, 2, 3}))
+
+    assert (
+        connector_builder(_connector_at([1, 3]), signature=_StubSignature())
+    ).bound_protocol == 3  # S∩H={1,2,3} -> max 3, not min 1
+    assert (
+        connector_builder(_connector_at([2, 2]), signature=_StubSignature())
+    ).bound_protocol == 2
+    assert (
+        connector_builder(_connector_at([3, 9]), signature=_StubSignature())
+    ).bound_protocol == 3  # S∩H={3}
+    # Above-host range still refuses.
+    with pytest.raises(ProtocolUnsupportedError):
+        connector_builder(_connector_at([4, 9]), signature=_StubSignature())
+
+
+def test_refusal_fires_before_any_runtime_composition(monkeypatch):
+    # Invariant 2: the refusal is LOAD-TIME — raised BEFORE any composition object
+    # is constructed. A future refactor moving the gate below composition would
+    # leak a partially-composed runtime + register the cascade grantee; this test
+    # pins the ordering so that refactor fails loudly.
+    from kailash.delegate import DelegateRuntime, DispatchSurface
+    from kailash.delegate.trust import TenantScopedCascade
+
+    built: list[str] = []
+    real_rt, real_ds = DelegateRuntime.__init__, DispatchSurface.__init__
+    real_grant = TenantScopedCascade.register_root_grantee
+
+    def _rt(self, *a, **k):
+        built.append("DelegateRuntime")
+        return real_rt(self, *a, **k)
+
+    def _ds(self, *a, **k):
+        built.append("DispatchSurface")
+        return real_ds(self, *a, **k)
+
+    def _grant(self, *a, **k):
+        built.append("register_root_grantee")
+        return real_grant(self, *a, **k)
+
+    monkeypatch.setattr(DelegateRuntime, "__init__", _rt)
+    monkeypatch.setattr(DispatchSurface, "__init__", _ds)
+    monkeypatch.setattr(TenantScopedCascade, "register_root_grantee", _grant)
+
+    with pytest.raises(ProtocolUnsupportedError):
+        connector_builder(_connector_at(2), signature=_StubSignature())
+    assert built == []  # nothing composed before the load-time refusal
+
+
+def test_huge_range_declaration_does_not_oom():
+    # A well-formed but enormous range is a valid integer pair; the gate MUST NOT
+    # materialize range(lo, hi+1) (which would OOM the host at load time). With
+    # H={1}, [1, 2**53-1] contains 1 -> loads at v1, instantly.
+    composed = connector_builder(
+        _connector_at([1, 2**53 - 1]), signature=_StubSignature()
+    )
+    assert composed.bound_protocol == 1
+    # An enormous range that EXCLUDES the host set still refuses fast (no materialize).
+    with pytest.raises(ProtocolUnsupportedError):
+        connector_builder(_connector_at([2, 2**53 - 1]), signature=_StubSignature())

@@ -50,8 +50,10 @@ from delegate_connectors_host.dispatch_observation import (
 )
 from delegate_connectors_host.dispatch_signing import HostSigner
 from delegate_connectors_host.connector_builder import (
+    HOST_SUPPORTED_PROTOCOLS,
     BuildConnector,
     ComposedRuntime,
+    ProtocolUnsupportedError,
     connector_builder,
 )
 from delegate_connectors_host.trust_primitives import AuthVerifier
@@ -86,6 +88,8 @@ __all__ = [
     "BuildConnector",
     "ComposedRuntime",
     "connector_builder",
+    "ProtocolUnsupportedError",
+    "HOST_SUPPORTED_PROTOCOLS",
     "NonConformantPayloadError",
     "assert_canonical_signing_domain",
 ]
