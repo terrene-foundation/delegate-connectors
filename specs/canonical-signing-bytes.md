@@ -1,8 +1,8 @@
 # Spec — Canonical Signing Bytes & Receipt Wire Form (NORMATIVE, FROZEN v1)
 
 **Status:** **FROZEN v1** — the receipt-signing core is hardened and ready for a second
-implementation (the Rust `dc-enterprise` tier) to build against. Adversarially probed for
-Python↔Rust silent-break edge cases (2026-06-01).
+conforming implementation to build against. Adversarially probed for cross-language
+(e.g. Python↔Rust) silent-break edge cases (2026-06-01).
 **Audience:** any implementation that must produce or verify Delegate connector receipts
 **byte-for-byte interoperably**.
 **Conformance language:** MUST / SHOULD / MAY per RFC 2119.
