@@ -53,6 +53,7 @@ from delegate_connectors_host.connector_builder import (
     HOST_SUPPORTED_PROTOCOLS,
     BuildConnector,
     ComposedRuntime,
+    HostSigningSurface,
     ProtocolUnsupportedError,
     connector_builder,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "AuthVerifier",
     "BuildConnector",
     "ComposedRuntime",
+    "HostSigningSurface",
     "connector_builder",
     "ProtocolUnsupportedError",
     "HOST_SUPPORTED_PROTOCOLS",

@@ -50,9 +50,11 @@ from kailash.delegate.verifier import Ed25519Verifier
 from delegate_connectors_host.connector_builder import (
     HOST_SUPPORTED_PROTOCOLS,
     ComposedRuntime,
+    HostSigningSurface,
     ProtocolUnsupportedError,
     connector_builder,
 )
+from delegate_connectors_host.dispatch_observation import DispatchObservationSeam
 from delegate_connectors_host.dispatch_signing import HostSigner
 from delegate_connectors_host.signing_bytes import (
     verify_action_envelope,
@@ -113,8 +115,15 @@ class _StubConnector(Connector):
         )
 
 
-def _build_stub(verifier: Ed25519Verifier, tenant_id: str) -> _StubConnector:
-    """A build-thunk that constructs the stub AROUND the host-owned verifier."""
+def _build_stub(
+    verifier: Ed25519Verifier, tenant_id: str, *, host_signing=None
+) -> _StubConnector:
+    """A build-thunk that constructs the stub AROUND the host-owned verifier.
+
+    The stub does not route side effects through ``host_signing`` (it is a
+    minimal Connector exercising the factory contract, not the host-owned
+    invocation path — that is covered by the per-connector wiring tests).
+    """
     return _StubConnector(verifier)
 
 
@@ -144,6 +153,26 @@ def test_composes_runnable_runtime():
     assert isinstance(composed.connector, _StubConnector)
     # The connector authenticates against the host-owned verifier (no parallel).
     assert composed.connector.auth_verifier is composed.verifier
+
+
+def test_factory_passes_host_signing_surface_to_thunk():
+    # P0-09 contract: the factory builds the seam + host signer and hands the
+    # build-thunk a HostSigningSurface (so the connector can route side effects
+    # through the host without holding a key).
+    captured = {}
+
+    def _capturing_thunk(verifier, tenant_id, *, host_signing):
+        captured["host_signing"] = host_signing
+        return _StubConnector(verifier)
+
+    composed = connector_builder(_capturing_thunk, signature=_StubSignature())
+    hs = captured["host_signing"]
+    assert isinstance(hs, HostSigningSurface)
+    assert isinstance(hs.seam, DispatchObservationSeam)
+    assert isinstance(hs.host_signer, HostSigner)
+    # The surface handed to the connector is the SAME one exposed on the runtime.
+    assert hs.seam is composed.seam
+    assert hs.host_signer is composed.host_signer
 
 
 def test_auth_verifier_is_the_canonical_sdk_binding():
@@ -215,7 +244,7 @@ async def test_attested_read_verifies_via_host_signer():
 
 
 def test_rejects_non_connector_thunk():
-    def _build_not_a_connector(verifier, tenant_id):
+    def _build_not_a_connector(verifier, tenant_id, **_):
         return object()  # not a Connector
 
     with pytest.raises(TypeError, match="MUST return a Connector"):
@@ -223,7 +252,7 @@ def test_rejects_non_connector_thunk():
 
 
 def test_rejects_connector_with_parallel_verifier():
-    def _build_parallel_verifier(verifier, tenant_id):
+    def _build_parallel_verifier(verifier, tenant_id, **_):
         # The forge oracle: connector builds its OWN verifier instead of using
         # the host-owned one it was handed.
         sk = Ed25519PrivateKey.generate()
@@ -258,7 +287,7 @@ def _connector_at(protocol):
         if protocol is not None:
             delegate_host_protocol = protocol
 
-    return lambda verifier, tenant_id: _ProtoConnector(verifier)
+    return lambda verifier, tenant_id, **_: _ProtoConnector(verifier)
 
 
 def test_default_non_declaring_connector_binds_at_v1():
