@@ -109,6 +109,7 @@ from delegate_connectors_host.trust_primitives import AuthVerifier
 __all__ = [
     "ComposedRuntime",
     "BuildConnector",
+    "HostSigningSurface",
     "connector_builder",
     "ProtocolUnsupportedError",
     "HOST_SUPPORTED_PROTOCOLS",
@@ -245,13 +246,39 @@ def _negotiate_protocol(connector: Connector) -> int:
     return max(common)
 
 
+@dataclass(frozen=True, slots=True)
+class HostSigningSurface:
+    """The host-owned invocation + signing surface handed to a connector (P0-09).
+
+    A connector NEVER holds a signing key or invokes the side effect whose result
+    it signs. Instead it routes every audited side effect through THIS surface:
+
+    - ``seam.observe_action(bound_transport, summarize, **args)`` / ``observe_read``
+      — the HOST invokes the brokered side effect through the ``BoundTransport``
+      handle and captures its OWN observation; the connector supplies only the
+      call args + a pure ``summarize`` projection, never the to-be-signed result.
+    - ``host_signer.sign_action(ticket)`` / ``attest_read(ticket)`` — the host
+      holds the Ed25519 key and signs ONLY the bytes the seam derived from a
+      host-observed ticket.
+
+    The forge closure is structural: a connector returning a fabricated success
+    for a side effect the host never brokered yields NO signed receipt (the seam
+    refuses to derive bytes it did not itself observe).
+    """
+
+    seam: DispatchObservationSeam
+    host_signer: HostSigner
+
+
 # The caller-supplied connector-build thunk. The factory builds the trust core
-# first and hands the thunk the host-owned ``verifier`` + the cascade
-# ``tenant_id``; the thunk closes over the connector's own transports/resolver
-# and returns a constructed :class:`Connector`. It MUST construct the connector
-# AROUND the supplied verifier (``connector.auth_verifier is verifier``) — the
-# factory rejects a connector that built a parallel verifier.
-BuildConnector = Callable[[AuthVerifier, str], Connector]
+# first and hands the thunk the host-owned ``verifier``, the cascade ``tenant_id``,
+# and the host signing surface (``host_signing`` — seam + signer, P0-09). The thunk
+# closes over the connector's own broker-minted ``BoundTransport`` handle(s) +
+# resolver and returns a constructed :class:`Connector`. It MUST construct the
+# connector AROUND the supplied verifier (``connector.auth_verifier is verifier``)
+# — the factory rejects a connector that built a parallel verifier. ``host_signing``
+# is passed as a keyword argument.
+BuildConnector = Callable[..., Connector]
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,10 +322,13 @@ def connector_builder(
     ceremony. The returned runtime is reusable and holds no per-call global state.
 
     Args:
-        build_connector: ``(verifier, tenant_id) -> Connector`` thunk. Called once,
-            after the trust core exists; MUST construct the connector around the
-            supplied verifier (the factory asserts ``connector.auth_verifier is
-            verifier``).
+        build_connector: ``(verifier, tenant_id, *, host_signing) -> Connector``
+            thunk. Called once, after the trust core + host signing surface exist;
+            MUST construct the connector around the supplied verifier (the factory
+            asserts ``connector.auth_verifier is verifier``). ``host_signing`` is a
+            :class:`HostSigningSurface` (seam + host_signer) the connector routes
+            its audited side effects through (P0-09) — the connector holds neither
+            a key nor a signer thunk.
         signature: the application-supplied dispatch signature (a
             ``SignatureContract``: ``name`` + ``input_schema`` + ``output_schema``)
             handed to the ``DispatchSurface``.
@@ -342,10 +372,19 @@ def connector_builder(
     )
     verifier = AuthVerifier(directory)
 
-    # Build the connector AROUND the host-owned verifier (build-thunk shape). A
-    # connector that constructs its own verifier is the forge oracle this shard
-    # closes — reject it.
-    connector = build_connector(verifier, tenant_id)
+    # The host owns the key; the connector receives only the verifier + the host
+    # signing surface. The seam observes side effects and the signer signs ONLY
+    # what the seam observed — the forge-closed connector-receipt signing surface
+    # (P0-08a/P0-08b). Built BEFORE the connector so the build-thunk can hand the
+    # connector its host signing surface (P0-09, owner-confirmed 2026-06-03).
+    seam = DispatchObservationSeam()
+    host_signer = HostSigner(seam, sk)
+    host_signing = HostSigningSurface(seam=seam, host_signer=host_signer)
+
+    # Build the connector AROUND the host-owned verifier (build-thunk shape),
+    # handing it the host signing surface. A connector that constructs its own
+    # verifier is the forge oracle this shard closes — reject it.
+    connector = build_connector(verifier, tenant_id, host_signing=host_signing)
     if not isinstance(connector, Connector):
         raise TypeError(
             "build_connector MUST return a Connector; got "
@@ -360,15 +399,9 @@ def connector_builder(
         )
 
     # Host-protocol negotiation (P0-10b): a LOUD load-time refusal on S ∩ H = ∅,
-    # raised BEFORE any trust-core composition object (seam, signer, cascade,
-    # dispatch surface, runtime) is built. Binds at max(S ∩ H).
+    # raised BEFORE any runtime composition object (cascade grant, dispatch
+    # surface, runtime) is built. Binds at max(S ∩ H).
     bound_protocol = _negotiate_protocol(connector)
-
-    # The host owns the key; the connector receives only the verifier. The seam
-    # observes side effects and the signer signs ONLY what the seam observed —
-    # the forge-closed connector-receipt signing surface (P0-08a/P0-08b).
-    seam = DispatchObservationSeam()
-    host_signer = HostSigner(seam, sk)
 
     # Capabilities are the connector's OWN declared ABC contract — not a
     # hand-copied literal. Sorted for a deterministic genesis/role capability set.
